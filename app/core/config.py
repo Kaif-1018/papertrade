@@ -12,6 +12,7 @@ class Settings(BaseSettings):
 
     # Database
     DATABASE_URL: str = "postgresql+asyncpg://crypto:crypto@postgres:5432/crypto_trading"
+    TEST_DATABASE_URL: str = "postgresql+asyncpg://crypto:crypto@postgres_test:5432/crypto_trading_test"
 
     # Redis
     REDIS_URL: str = "redis://redis:6379/0"
