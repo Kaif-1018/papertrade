@@ -7,8 +7,10 @@ transaction that is rolled back at the end — no teardown SQL needed.
 
 from collections.abc import AsyncGenerator
 
+from httpx import ASGITransport, AsyncClient
 import pytest
 import pytest_asyncio
+from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import (
     AsyncConnection,
     AsyncSession,
@@ -21,7 +23,10 @@ from sqlalchemy.pool import NullPool
 from alembic import command
 from alembic.config import Config
 
+from app.api.deps import get_db
 from app.core.config import get_settings
+from app.core.redis import close_redis, get_redis, init_redis
+from app.main import create_app
 from app.models.base import Base  # noqa: F401 — ensures metadata is populated
 import app.models  # noqa: F401 — registers all tables on Base.metadata
 
@@ -81,3 +86,41 @@ async def db_session(db_conn: AsyncConnection) -> AsyncGenerator[AsyncSession, N
     )
     async with session_factory() as session:
         yield session
+
+
+# ---------------------------------------------------------------------------
+# Redis and HTTP Client fixtures for integration tests
+# ---------------------------------------------------------------------------
+
+@pytest_asyncio.fixture()
+async def test_redis() -> AsyncGenerator[Redis, None]:
+    """Ensure Redis is connected and cleared before and after each test."""
+    await init_redis()
+    client = get_redis()
+    await client.flushdb()
+    yield client
+    await client.flushdb()
+    await close_redis()
+
+
+@pytest_asyncio.fixture()
+async def app_instance(db_session: AsyncSession, test_redis: Redis):
+    """FastAPI test app instance with overridden DB and Redis dependencies."""
+    app = create_app()
+
+    async def override_get_db() -> AsyncGenerator[AsyncSession, None]:
+        yield db_session
+
+    app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[get_redis] = lambda: test_redis
+    return app
+
+
+@pytest_asyncio.fixture()
+async def client(app_instance) -> AsyncGenerator[AsyncClient, None]:
+    """Async HTTP client bound to the test FastAPI application."""
+    async with AsyncClient(
+        transport=ASGITransport(app=app_instance),
+        base_url="http://test",
+    ) as ac:
+        yield ac
