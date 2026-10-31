@@ -13,3 +13,4 @@ venv/
 htmlcov/
 *.log
 .mypy_cache/
+*WALKTHROUGH*.md

@@ -1,7 +1,6 @@
 """Application settings loaded from environment variables."""
 
 from decimal import Decimal
-from functools import cached_property
 
 from pydantic import field_validator
 from pydantic_settings import BaseSettings
@@ -23,9 +22,11 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_MINUTES: int = 30
     REFRESH_TOKEN_DAYS: int = 7
 
-    # Trading
+    # Trading & Price Feed
     DEFAULT_STARTING_BALANCE: Decimal = Decimal("10000")
-    BINANCE_WS_URL: str = "wss://stream.binance.com:9443/ws"
+    BINANCE_WS_URL: str = "wss://stream.binance.com/stream"
+    PRICE_STALE_SECONDS: int = 10
+    ENABLE_PRICE_FEED: bool = True
 
     # Stored as a raw CSV string to avoid pydantic-settings JSON coercion
     TRADING_PAIRS: str = "BTCUSDT,ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT,ADAUSDT,DOGEUSDT,DOTUSDT"
@@ -38,8 +39,8 @@ class Settings(BaseSettings):
 
     @property
     def trading_pairs_list(self) -> list[str]:
-        """Split the CSV into a proper list."""
-        return [p.strip() for p in self.TRADING_PAIRS.split(",") if p.strip()]
+        """Split the CSV into a proper list of uppercase symbols."""
+        return [p.strip().upper() for p in self.TRADING_PAIRS.split(",") if p.strip()]
 
     @field_validator("DEFAULT_STARTING_BALANCE", mode="before")
     @classmethod

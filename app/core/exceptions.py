@@ -82,3 +82,30 @@ class NotFoundError(AppException):
     code = "NOT_FOUND"
     message = "Resource not found"
 
+
+# ---------------------------------------------------------------------------
+# Day 4: Price Feed & Registry Exceptions
+# ---------------------------------------------------------------------------
+
+class SymbolNotSupported(AppException):
+    """Raised when a requested trading symbol is not in TRADING_PAIRS."""
+
+    status_code = 404
+    code = "SYMBOL_NOT_SUPPORTED"
+    message = "Trading symbol not supported"
+
+
+class PriceUnavailable(AppException):
+    """Raised when a requested symbol has not received any price tick yet."""
+
+    status_code = 503
+    code = "PRICE_UNAVAILABLE"
+    message = "Price is currently unavailable for this symbol"
+
+
+class StalePrice(AppException):
+    """Raised when the price for a symbol is older than PRICE_STALE_SECONDS."""
+
+    status_code = 503
+    code = "STALE_PRICE"
+    message = "Price data is stale"

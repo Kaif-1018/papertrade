@@ -1,5 +1,6 @@
 """FastAPI application factory and lifespan manager."""
 
+import asyncio
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
@@ -10,24 +11,50 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 import structlog
 
+from app.core.config import get_settings
 from app.core.exceptions import AppException
 from app.core.logging import setup_logging
 from app.core.redis import close_redis, init_redis
-from app.routers import admin, auth, health
+from app.routers import admin, auth, health, prices
+from app.services.price_feed import PriceFeedService
 
 logger = structlog.stdlib.get_logger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    """Startup: logging, Redis. Shutdown: close Redis."""
+    """Startup: logging, Redis, price feed. Shutdown: stop feed, close Redis."""
     setup_logging()
     logger.info("starting_up")
 
     await init_redis()
     logger.info("redis_connected")
 
+    settings = get_settings()
+    feed_service: PriceFeedService | None = None
+    feed_task: asyncio.Task[None] | None = None
+
+    if settings.ENABLE_PRICE_FEED:
+        feed_service = PriceFeedService(
+            url_base=settings.BINANCE_WS_URL,
+            symbols=settings.trading_pairs_list,
+        )
+        feed_task = asyncio.create_task(feed_service.run())
+        app.state.price_feed = feed_service
+        app.state.price_feed_task = feed_task
+        logger.info("price_feed_task_started")
+
     yield
+
+    if feed_service is not None:
+        await feed_service.stop()
+
+    if feed_task is not None:
+        feed_task.cancel()
+        try:
+            await feed_task
+        except asyncio.CancelledError:
+            pass
 
     await close_redis()
     logger.info("shutdown_complete")
@@ -96,5 +123,6 @@ def create_app() -> FastAPI:
     app.include_router(health.router)
     app.include_router(auth.router)
     app.include_router(admin.router)
+    app.include_router(prices.router)
 
     return app
