@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     DEFAULT_STARTING_BALANCE: Decimal = Decimal("10000")
     BINANCE_WS_URL: str = "wss://stream.binance.com/stream"
     PRICE_STALE_SECONDS: int = 10
+    FEED_WATCHDOG_SECONDS: float = 15.0
     ENABLE_PRICE_FEED: bool = True
 
     # Stored as a raw CSV string to avoid pydantic-settings JSON coercion

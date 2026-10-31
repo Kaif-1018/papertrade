@@ -100,7 +100,12 @@ def is_supported(symbol: str) -> bool:
     return normalized_sym in get_settings().trading_pairs_list
 
 
+def remove_price(symbol: str) -> bool:
+    """Remove a symbol from the registry. Returns True if removed."""
+    normalized_sym = symbol.strip().upper()
+    return _registry.pop(normalized_sym, None) is not None
+
+
 def clear() -> None:
     """Wipe all registry entries (used for test isolation)."""
     _registry.clear()
-

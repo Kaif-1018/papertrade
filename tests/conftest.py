@@ -5,7 +5,9 @@ The test suite connects to the separate `crypto_trading_test` database
 transaction that is rolled back at the end — no teardown SQL needed.
 """
 
+import asyncio
 from collections.abc import AsyncGenerator
+import json
 
 from httpx import ASGITransport, AsyncClient
 import pytest
@@ -19,6 +21,8 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 from sqlalchemy.pool import NullPool
+import websockets
+from websockets.server import WebSocketServerProtocol
 
 from alembic import command
 from alembic.config import Config
@@ -124,3 +128,100 @@ async def client(app_instance) -> AsyncGenerator[AsyncClient, None]:
         base_url="http://test",
     ) as ac:
         yield ac
+
+
+# ---------------------------------------------------------------------------
+# Mock Binance WebSocket Server Fixture
+# ---------------------------------------------------------------------------
+
+class MockBinanceServer:
+    """In-memory WebSocket server emulating Binance ticker feeds."""
+
+    def __init__(self) -> None:
+        self.server: Any = None
+        self.port: int = 0
+        self.connections: set[WebSocketServerProtocol] = set()
+        self.received_messages: list[str] = []
+        self._connected_event = asyncio.Event()
+
+    @property
+    def ws_url(self) -> str:
+        return f"ws://127.0.0.1:{self.port}"
+
+    async def handler(self, websocket: WebSocketServerProtocol) -> None:
+        self.connections.add(websocket)
+        self._connected_event.set()
+        try:
+            async for raw in websocket:
+                text = raw if isinstance(raw, str) else raw.decode("utf-8")
+                self.received_messages.append(text)
+                try:
+                    data = json.loads(text)
+                    if "method" in data and "id" in data:
+                        ack = json.dumps({"result": None, "id": data["id"]})
+                        await websocket.send(ack)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        finally:
+            self.connections.discard(websocket)
+
+    async def broadcast_tick(
+        self,
+        symbol: str,
+        price: str,
+        epoch_ms: int = 1710000000000,
+    ) -> None:
+        """Broadcast a ticker frame matching Binance combined stream format."""
+        payload = {
+            "stream": f"{symbol.lower()}@ticker",
+            "data": {
+                "e": "24hrTicker",
+                "E": epoch_ms,
+                "s": symbol.upper(),
+                "c": price,
+            },
+        }
+        await self.broadcast(json.dumps(payload))
+
+    async def broadcast(self, raw: str) -> None:
+        """Send a raw text frame to all active client connections."""
+        if self.connections:
+            await asyncio.gather(
+                *(c.send(raw) for c in list(self.connections)),
+                return_exceptions=True,
+            )
+
+    async def drop_connections(
+        self, code: int = 1000, reason: str = "Mock drop"
+    ) -> None:
+        """Force-close all connected clients."""
+        active = list(self.connections)
+        self.connections.clear()
+        for c in active:
+            try:
+                await c.close(code=code, reason=reason)
+            except Exception:
+                pass
+
+    async def wait_for_connection(self, timeout: float = 3.0) -> None:
+        """Wait until at least one client has connected."""
+        if not self.connections:
+            self._connected_event.clear()
+            await asyncio.wait_for(self._connected_event.wait(), timeout=timeout)
+
+
+@pytest_asyncio.fixture()
+async def mock_binance() -> AsyncGenerator[MockBinanceServer, None]:
+    """Yields a running local mock Binance WebSocket server on an ephemeral port."""
+    mock = MockBinanceServer()
+    server = await websockets.serve(mock.handler, "127.0.0.1", 0)
+    mock.server = server
+    mock.port = server.sockets[0].getsockname()[1]
+
+    yield mock
+
+    await mock.drop_connections()
+    server.close()
+    await server.wait_closed()
