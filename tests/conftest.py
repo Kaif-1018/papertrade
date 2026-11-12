@@ -7,12 +7,15 @@ transaction that is rolled back at the end — no teardown SQL needed.
 
 import asyncio
 from collections.abc import AsyncGenerator
+from decimal import Decimal
 import json
+import uuid
 
 from httpx import ASGITransport, AsyncClient
 import pytest
 import pytest_asyncio
 from redis.asyncio import Redis
+from sqlalchemy import text as sa_text
 from sqlalchemy.ext.asyncio import (
     AsyncConnection,
     AsyncSession,
@@ -33,6 +36,7 @@ from app.core.redis import close_redis, get_redis, init_redis
 from app.main import create_app
 from app.models.base import Base  # noqa: F401 — ensures metadata is populated
 import app.models  # noqa: F401 — registers all tables on Base.metadata
+from app.models.user import User, UserRole
 
 
 @pytest.fixture(scope="session")
@@ -225,3 +229,73 @@ async def mock_binance() -> AsyncGenerator[MockBinanceServer, None]:
     await mock.drop_connections()
     server.close()
     await server.wait_closed()
+
+
+# ---------------------------------------------------------------------------
+# Concurrency & Committed-Transaction Fixtures (Day 7 hardening)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture()
+def session_factory(test_engine):
+    """Produces AsyncSession instances bound directly to test_engine (real commit/rollback, no outer txn)."""
+    return async_sessionmaker(
+        bind=test_engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+    )
+
+
+@pytest_asyncio.fixture()
+async def clean_db(test_engine):
+    """Truncates all tables before and after the test to isolate committed concurrency tests."""
+    async with test_engine.begin() as conn:
+        await conn.execute(
+            sa_text("TRUNCATE TABLE trades, holdings, watchlist, price_snapshots, users CASCADE")
+        )
+    yield
+    async with test_engine.begin() as conn:
+        await conn.execute(
+            sa_text("TRUNCATE TABLE trades, holdings, watchlist, price_snapshots, users CASCADE")
+        )
+
+
+@pytest_asyncio.fixture()
+async def create_user(clean_db, session_factory):
+    """Fixture create_user(balance) that commits a user and returns the UUID id."""
+    async def _create(
+        balance: Decimal | str = "10000.00000000",
+        email: str | None = None,
+    ) -> uuid.UUID:
+        user_id = uuid.uuid4()
+        user_email = email or f"user-{user_id.hex[:8]}@test.com"
+        bal = Decimal(str(balance))
+        async with session_factory() as session:
+            user = User(
+                id=user_id,
+                email=user_email,
+                password_hash="$2b$12$fakehashforconcurrencytest",
+                role=UserRole.USER,
+                virtual_balance=bal,
+                initial_balance=bal,
+            )
+            session.add(user)
+            await session.commit()
+        return user_id
+
+    return _create
+
+
+@pytest.fixture()
+def set_price():
+    """Fixture set_price(symbol, price) that writes directly to the in-memory registry (no network)."""
+    from datetime import datetime, timezone
+    from app.core.price_registry import clear, set_price as reg_set_price
+
+    def _set(symbol: str, price: Decimal | str):
+        p = Decimal(str(price))
+        return reg_set_price(symbol.upper(), p, datetime.now(timezone.utc))
+
+    clear()
+    yield _set
+    clear()
+

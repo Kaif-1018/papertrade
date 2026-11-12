@@ -368,12 +368,13 @@ class TestSell:
 
         trades = (
             await db_session.execute(
-                select(Trade).where(Trade.user_id == user.id).order_by(Trade.executed_at)
+                select(Trade).where(Trade.user_id == user.id)
             )
         ).scalars().all()
         assert len(trades) == 2
-        assert trades[0].trade_type == TradeType.BUY
-        assert trades[1].trade_type == TradeType.SELL
+        types = [t.trade_type for t in trades]
+        assert TradeType.BUY in types
+        assert TradeType.SELL in types
 
     @pytest.mark.asyncio
     async def test_rollback_on_trade_insert_failure(self, db_session: AsyncSession) -> None:

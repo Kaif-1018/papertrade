@@ -26,13 +26,26 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import InsufficientFunds, InsufficientHoldings, NotFoundError
-from app.core.price_registry import get_price
+from app.core.exceptions import (
+    InsufficientFunds,
+    InsufficientHoldings,
+    InvalidQuantity,
+    NotFoundError,
+    SymbolNotSupported,
+)
+from app.core.price_registry import get_price, is_supported
 from app.models.trade import Trade, TradeType
 from app.repositories.holding_repository import HoldingRepository
 from app.repositories.trade_repository import TradeRepository
 from app.repositories.user import UserRepository
-from app.schemas.trade import QUANT, TradeOut, TradeResult, quantize
+from app.schemas.trade import (
+    MAX_QUANTITY,
+    MAX_QUANTITY_DP,
+    QUANT,
+    TradeOut,
+    TradeResult,
+    quantize,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +59,29 @@ class TradeService:
         self._holdings = HoldingRepository(session)
         self._trades = TradeRepository(session)
 
+    @staticmethod
+    def _validate_symbol(symbol: str) -> str:
+        """Validate and normalize symbol."""
+        if not symbol or not isinstance(symbol, str) or not symbol.strip():
+            raise SymbolNotSupported("Symbol must be a non-empty string")
+        sym = symbol.strip().upper()
+        if not is_supported(sym):
+            raise SymbolNotSupported(f"Symbol {sym} is not supported")
+        return sym
+
+    @staticmethod
+    def _validate_quantity(quantity: Decimal) -> None:
+        """Service-level defense: enforce positive, bounded, 8-dp decimal quantity."""
+        if not isinstance(quantity, Decimal):
+            raise InvalidQuantity(f"Quantity must be a Decimal, got {type(quantity).__name__}")
+        if quantity <= Decimal("0"):
+            raise InvalidQuantity("Quantity must be greater than 0")
+        if quantity > MAX_QUANTITY:
+            raise InvalidQuantity(f"Quantity exceeds maximum allowed ({MAX_QUANTITY})")
+        sign, digits, exponent = quantity.as_tuple()
+        if exponent != "n" and isinstance(exponent, int) and abs(exponent) > MAX_QUANTITY_DP:
+            raise InvalidQuantity(f"Quantity must have at most {MAX_QUANTITY_DP} decimal places")
+
     # ------------------------------------------------------------------
     # BUY
     # ------------------------------------------------------------------
@@ -54,13 +90,14 @@ class TradeService:
         """Execute a BUY trade.
 
         Steps:
-        1. Read execution price from registry (raises before any DB work).
+        1. Validate inputs and read execution price from registry.
         2. Lock the user row.
         3. Compute total and verify balance.
         4. Deduct balance, upsert holding, insert trade record.
         5. Commit and return result.
         """
-        symbol = symbol.upper()
+        symbol = self._validate_symbol(symbol)
+        self._validate_quantity(quantity)
 
         # 1. Read price BEFORE opening locks — minimise lock hold time.
         #    get_price raises PriceUnavailable or StalePrice if the feed
@@ -155,13 +192,14 @@ class TradeService:
         """Execute a SELL trade.
 
         Steps:
-        1. Read execution price from registry.
+        1. Validate inputs and read execution price from registry.
         2. Lock user row FIRST, then holding row (deadlock prevention).
         3. Verify sufficient holdings.
         4. Deduct holdings, credit balance, insert trade record.
         5. Commit and return result.
         """
-        symbol = symbol.upper()
+        symbol = self._validate_symbol(symbol)
+        self._validate_quantity(quantity)
 
         # 1. Read price BEFORE opening locks.
         price_entry = get_price(symbol)
