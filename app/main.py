@@ -15,7 +15,7 @@ from app.core.config import get_settings
 from app.core.exceptions import AppException
 from app.core.logging import setup_logging
 from app.core.redis import close_redis, init_redis
-from app.routers import admin, auth, health, prices
+from app.routers import admin, auth, health, prices, trade
 from app.services.price_feed import PriceFeedService
 
 logger = structlog.stdlib.get_logger(__name__)
@@ -83,9 +83,12 @@ def create_app() -> FastAPI:
     async def handle_app_exception(
         request: Request, exc: AppException
     ) -> JSONResponse:
+        body: dict = {"code": exc.code, "message": exc.message}
+        if getattr(exc, "details", None) is not None:
+            body["details"] = exc.details
         return JSONResponse(
             status_code=exc.status_code,
-            content={"error": {"code": exc.code, "message": exc.message}},
+            content={"error": body},
         )
 
     @app.exception_handler(RequestValidationError)
@@ -124,5 +127,6 @@ def create_app() -> FastAPI:
     app.include_router(auth.router)
     app.include_router(admin.router)
     app.include_router(prices.router)
+    app.include_router(trade.router)
 
     return app

@@ -7,11 +7,13 @@ from app.services.price_feed import (
     PriceFeedService,
     parse_ticker_message,
 )
+from app.services.trade_service import TradeService
 
 __all__ = [
     "AuthService",
     "FeedStatus",
     "ParsedTick",
     "PriceFeedService",
+    "TradeService",
     "parse_ticker_message",
 ]

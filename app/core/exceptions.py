@@ -17,6 +17,7 @@ class AppException(Exception):
         message: str | None = None,
         code: str | None = None,
         status_code: int | None = None,
+        details: dict | None = None,
     ) -> None:
         if message is not None:
             self.message = message
@@ -24,6 +25,7 @@ class AppException(Exception):
             self.code = code
         if status_code is not None:
             self.status_code = status_code
+        self.details = details
         super().__init__(self.message)
 
 
@@ -109,3 +111,31 @@ class StalePrice(AppException):
     status_code = 503
     code = "STALE_PRICE"
     message = "Price data is stale"
+
+
+# ---------------------------------------------------------------------------
+# Day 6: Trade Execution Exceptions
+# ---------------------------------------------------------------------------
+
+class InsufficientFunds(AppException):
+    """Raised when a BUY trade requires more than the user's available balance."""
+
+    status_code = 422
+    code = "INSUFFICIENT_FUNDS"
+    message = "Insufficient funds for this trade"
+
+
+class InsufficientHoldings(AppException):
+    """Raised when a SELL trade exceeds the user's holding quantity."""
+
+    status_code = 422
+    code = "INSUFFICIENT_HOLDINGS"
+    message = "Insufficient holdings for this trade"
+
+
+class InvalidQuantity(AppException):
+    """Raised when a trade quantity violates business rules."""
+
+    status_code = 422
+    code = "INVALID_QUANTITY"
+    message = "Invalid trade quantity"
