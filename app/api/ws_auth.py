@@ -34,10 +34,12 @@ class WebSocketAuthError(Exception):
         super().__init__(reason)
 
 
-async def authenticate_websocket(websocket: WebSocket) -> UUID:
+async def authenticate_websocket_with_claims(
+    websocket: WebSocket,
+) -> tuple[UUID, str]:
     """Validate Origin and JWT access token from query parameters.
 
-    Returns the authenticated user's UUID.
+    Returns a tuple of (user_id: UUID, role: str).
     Closes the connection with code 1008 and raises WebSocketAuthError on failure.
     """
     settings = get_settings()
@@ -88,5 +90,16 @@ async def authenticate_websocket(websocket: WebSocket) -> UUID:
         await websocket.close(code=1008, reason="Invalid user ID in token")
         raise WebSocketAuthError("Invalid user ID in token")
 
+    role = str(payload.get("role", "USER")).upper()
+    return user_id, role
+
+
+async def authenticate_websocket(websocket: WebSocket) -> UUID:
+    """Validate Origin and JWT access token from query parameters.
+
+    Returns the authenticated user's UUID.
+    Closes the connection with code 1008 and raises WebSocketAuthError on failure.
+    """
+    user_id, _ = await authenticate_websocket_with_claims(websocket)
     return user_id
 

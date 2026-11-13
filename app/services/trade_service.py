@@ -20,11 +20,16 @@ Design decisions
 * **Immutable trades**: Once inserted, a trade row is never updated or deleted.
 """
 
+import asyncio
 import logging
 from decimal import Decimal, ROUND_DOWN, ROUND_HALF_UP
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
+
+if TYPE_CHECKING:
+    from app.services.notifier import TradeNotifier
 
 from app.core.exceptions import (
     InsufficientFunds,
@@ -49,15 +54,59 @@ from app.schemas.trade import (
 
 logger = logging.getLogger(__name__)
 
+# Strong references to running background notification tasks to prevent premature garbage collection
+_active_notification_tasks: set[asyncio.Task[Any]] = set()
+
+
+def _log_notification_task_result(task: asyncio.Task[Any]) -> None:
+    """Done callback logging any unhandled exception in fire-and-forget notification tasks."""
+    try:
+        exc = task.exception()
+        if exc is not None:
+            logger.warning("trade_notification_task_exception", extra={"error": str(exc)})
+    except asyncio.CancelledError:
+        pass
+    except Exception as exc:
+        logger.warning("trade_notification_done_callback_error", extra={"error": str(exc)})
+
 
 class TradeService:
     """Orchestrates buy/sell trades within a single database transaction."""
 
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(
+        self,
+        session: AsyncSession,
+        notifier: "TradeNotifier | None" = None,
+    ) -> None:
         self._session = session
         self._users = UserRepository(session)
         self._holdings = HoldingRepository(session)
         self._trades = TradeRepository(session)
+        self._notifier = notifier
+
+    def _fire_notification(
+        self,
+        user_id: UUID,
+        trade: TradeOut,
+        balance: Decimal,
+    ) -> None:
+        """Dispatch post-commit trade notification asynchronously without awaiting."""
+        if self._notifier is None:
+            return
+
+        try:
+            task = asyncio.create_task(
+                self._notifier.notify_trade_committed(
+                    user_id=user_id,
+                    trade=trade,
+                    balance=balance,
+                )
+            )
+            _active_notification_tasks.add(task)
+            task.add_done_callback(_active_notification_tasks.discard)
+            task.add_done_callback(_log_notification_task_result)
+        except Exception as exc:
+            logger.warning("failed_to_spawn_trade_notification_task", extra={"error": str(exc)})
 
     @staticmethod
     def _validate_symbol(symbol: str) -> str:
@@ -171,6 +220,9 @@ class TradeService:
             await self._session.rollback()
             raise
 
+        # Post-commit notification: strictly fire-and-forget, never blocks response
+        self._fire_notification(user_id=user_id, trade=result.trade, balance=result.balance)
+
         logger.info(
             "trade_executed",
             extra={
@@ -267,6 +319,9 @@ class TradeService:
         except Exception:
             await self._session.rollback()
             raise
+
+        # Post-commit notification: strictly fire-and-forget, never blocks response
+        self._fire_notification(user_id=user_id, trade=result.trade, balance=result.balance)
 
         logger.info(
             "trade_executed",

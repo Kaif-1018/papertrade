@@ -89,6 +89,23 @@ def get_price(
     return entry
 
 
+def get_price_safe(
+    symbol: str,
+    clock: Callable[[], datetime] | None = None,
+    stale_seconds: int | float | None = None,
+) -> Decimal | None:
+    """Safely retrieve the latest price for a symbol.
+
+    Returns the Decimal price if available and fresh, or None if the price
+    has never been seen (PriceUnavailable) or is older than stale threshold (StalePrice).
+    """
+    try:
+        entry = get_price(symbol, clock=clock, stale_seconds=stale_seconds)
+        return entry.price
+    except (PriceUnavailable, StalePrice):
+        return None
+
+
 def get_all() -> dict[str, PriceEntry]:
     """Return a shallow copy of all current registry entries."""
     return _registry.copy()

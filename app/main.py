@@ -15,10 +15,21 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 import structlog
 
 from app.core.config import get_settings
+from app.core.database import async_session_factory
 from app.core.exceptions import AppException
 from app.core.logging import setup_logging
 from app.core.redis import close_redis, init_redis
-from app.routers import admin, auth, health, prices, trade, ws_prices
+from app.routers import (
+    admin,
+    auth,
+    health,
+    portfolio,
+    prices,
+    trade,
+    ws_portfolio,
+    ws_prices,
+)
+from app.services.notifier import TradeNotifier
 from app.services.price_broadcaster import PriceBroadcasterService
 from app.services.price_feed import PriceFeedService
 from app.services.ws_manager import ConnectionManager
@@ -41,11 +52,22 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     broadcaster_service: PriceBroadcasterService | None = None
     broadcaster_task: asyncio.Task[None] | None = None
 
+    # Session factory (allows test overrides via app.state.session_factory)
+    session_factory_to_use = getattr(app.state, "session_factory", async_session_factory)
+    app.state.session_factory = session_factory_to_use
+
     # WebSocket connection manager singleton
     ws_manager = ConnectionManager(
         max_subscriptions_per_conn=settings.WS_MAX_SUBSCRIPTIONS_PER_CLIENT
     )
     app.state.ws_manager = ws_manager
+
+    # Post-commit trade and portfolio notifier singleton
+    trade_notifier = TradeNotifier(
+        manager=ws_manager,
+        session_factory=session_factory_to_use,
+    )
+    app.state.trade_notifier = trade_notifier
 
     # Start Redis price broadcaster background task
     broadcaster_service = PriceBroadcasterService(manager=ws_manager)
@@ -158,7 +180,9 @@ def create_app() -> FastAPI:
     app.include_router(admin.router)
     app.include_router(prices.router)
     app.include_router(trade.router)
+    app.include_router(portfolio.router)
     app.include_router(ws_prices.router)
+    app.include_router(ws_portfolio.router)
 
     # Static files (WS test client, dashboard, etc.)
     static_dir = Path(__file__).resolve().parent.parent / "static"

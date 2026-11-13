@@ -28,7 +28,9 @@ async def get_current_user(
     if credentials is None or not credentials.credentials:
         raise TokenInvalidError("Authentication credentials were not provided")
 
-    token = credentials.credentials
+    token = credentials.credentials.strip()
+    if token.lower().startswith("bearer "):
+        token = token[7:].strip()
     try:
         payload = decode_token(token)
     except jwt.ExpiredSignatureError:

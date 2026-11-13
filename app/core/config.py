@@ -33,6 +33,7 @@ class Settings(BaseSettings):
     TRADING_PAIRS: str = "BTCUSDT,ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT,ADAUSDT,DOGEUSDT,DOTUSDT"
     ALLOWED_ORIGINS: str = "*"
     WS_MAX_SUBSCRIPTIONS_PER_CLIENT: int = 20
+    PORTFOLIO_REFRESH_INTERVAL_SECONDS: float = 5.0
 
     model_config = {
         "env_file": ".env",

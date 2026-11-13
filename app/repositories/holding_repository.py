@@ -35,6 +35,19 @@ class HoldingRepository(BaseRepository[Holding]):
         )
         return result.scalar_one_or_none()
 
+    async def list_by_user(self, user_id: UUID) -> list[Holding]:
+        """Fetch all holdings for a user without row locks.
+
+        Read-only query: used by portfolio valuation and queries that do
+        not mutate balance or holdings.
+        """
+        result = await self._session.execute(
+            select(Holding)
+            .where(Holding.user_id == user_id)
+            .order_by(Holding.symbol)
+        )
+        return list(result.scalars().all())
+
     def create(
         self,
         user_id: UUID,
