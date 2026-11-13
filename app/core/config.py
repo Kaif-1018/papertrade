@@ -31,6 +31,8 @@ class Settings(BaseSettings):
 
     # Stored as a raw CSV string to avoid pydantic-settings JSON coercion
     TRADING_PAIRS: str = "BTCUSDT,ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT,ADAUSDT,DOGEUSDT,DOTUSDT"
+    ALLOWED_ORIGINS: str = "*"
+    WS_MAX_SUBSCRIPTIONS_PER_CLIENT: int = 20
 
     model_config = {
         "env_file": ".env",
@@ -42,6 +44,13 @@ class Settings(BaseSettings):
     def trading_pairs_list(self) -> list[str]:
         """Split the CSV into a proper list of uppercase symbols."""
         return [p.strip().upper() for p in self.TRADING_PAIRS.split(",") if p.strip()]
+
+    @property
+    def allowed_origins_list(self) -> list[str]:
+        """Split ALLOWED_ORIGINS CSV into list."""
+        if self.ALLOWED_ORIGINS.strip() == "*":
+            return ["*"]
+        return [o.strip() for o in self.ALLOWED_ORIGINS.split(",") if o.strip()]
 
     @field_validator("DEFAULT_STARTING_BALANCE", mode="before")
     @classmethod

@@ -29,6 +29,7 @@ from websockets.exceptions import (
 )
 
 from app.core.price_registry import remove_price, set_price
+from app.core.redis import get_redis
 
 logger = structlog.stdlib.get_logger(__name__)
 
@@ -173,6 +174,7 @@ class PriceFeedService:
         sleep_fn: Callable[[float], Coroutine[Any, Any, None]] = asyncio.sleep,
         random_fn: Callable[[float, float], float] = random.uniform,
         time_fn: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+        redis: Any | None = None,
     ) -> None:
         self.url_base = url_base
         self._symbols: set[str] = {s.strip().upper() for s in symbols if s.strip()}
@@ -183,6 +185,8 @@ class PriceFeedService:
         self._sleep_fn = sleep_fn
         self._random_fn = random_fn
         self._time_fn = time_fn
+        self._redis = redis
+        self._last_redis_err_log_at: float = -100.0
 
         self.stats = FeedStats()
         self._running = False
@@ -385,8 +389,30 @@ class PriceFeedService:
             self.stats.messages_received += 1
             self.stats.symbols_seen.add(tick.symbol)
             set_price(tick.symbol, tick.price, tick.event_time)
+            await self._publish_tick(tick)
         else:
             self.stats.messages_dropped += 1
+
+    async def _publish_tick(self, tick: ParsedTick) -> None:
+        """Publish parsed tick to Redis pubsub channel prices:{SYMBOL}.
+
+        A Redis failure must never break or slow down the feed loop.
+        Failures are caught and logged at warning level with rate limiting (max once per 10s).
+        """
+        try:
+            r = self._redis or get_redis()
+            payload = json.dumps({
+                "type": "price",
+                "symbol": tick.symbol,
+                "price": str(tick.price),
+                "ts": tick.event_time.isoformat(),
+            })
+            await r.publish(f"prices:{tick.symbol}", payload)
+        except Exception as exc:
+            now = asyncio.get_event_loop().time()
+            if now - self._last_redis_err_log_at >= 10.0:
+                self._last_redis_err_log_at = now
+                logger.warning("price_feed_redis_publish_error", error=str(exc))
 
     async def add_symbol(self, symbol: str) -> None:
         """Dynamically subscribe to a new symbol without dropping connection."""

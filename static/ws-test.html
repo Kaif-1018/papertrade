@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Crypto Simulator — Real-Time WebSocket Price Feed</title>
+    <style>
+        :root {
+            --bg-color: #0d1117;
+            --card-bg: #161b22;
+            --border-color: #30363d;
+            --text-primary: #c9d1d9;
+            --text-secondary: #8b949e;
+            --accent: #58a6ff;
+            --green: #2ea043;
+            --green-glow: rgba(46, 160, 67, 0.4);
+            --red: #f85149;
+            --red-glow: rgba(248, 81, 73, 0.4);
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-primary);
+            padding: 24px;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 24px;
+            padding-bottom: 16px;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .header h1 {
+            font-size: 22px;
+            font-weight: 600;
+        }
+
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 13px;
+            font-weight: 500;
+            background: #21262d;
+            border: 1px solid var(--border-color);
+        }
+
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #8b949e;
+        }
+
+        .status-dot.connected {
+            background: var(--green);
+            box-shadow: 0 0 8px var(--green-glow);
+        }
+
+        .status-dot.connecting {
+            background: #d29922;
+        }
+
+        .status-dot.error {
+            background: var(--red);
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        .card {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 16px;
+        }
+
+        .card h2 {
+            font-size: 15px;
+            font-weight: 600;
+            margin-bottom: 14px;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .form-group {
+            margin-bottom: 12px;
+        }
+
+        label {
+            display: block;
+            font-size: 12px;
+            color: var(--text-secondary);
+            margin-bottom: 4px;
+        }
+
+        input {
+            width: 100%;
+            padding: 8px 12px;
+            background: #0d1117;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            color: var(--text-primary);
+            font-size: 14px;
+        }
+
+        input:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
+        .btn-group {
+            display: flex;
+            gap: 10px;
+            margin-top: 14px;
+        }
+
+        button {
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            border: 1px solid transparent;
+            transition: all 0.15s ease;
+        }
+
+        .btn-primary {
+            background: #238636;
+            color: #ffffff;
+        }
+
+        .btn-primary:hover {
+            background: #2ea043;
+        }
+
+        .btn-danger {
+            background: #da3633;
+            color: #ffffff;
+        }
+
+        .btn-danger:hover {
+            background: #f85149;
+        }
+
+        .btn-secondary {
+            background: #21262d;
+            border-color: var(--border-color);
+            color: var(--text-primary);
+        }
+
+        .btn-secondary:hover {
+            background: #30363d;
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 14px;
+        }
+
+        th {
+            text-align: left;
+            padding: 10px;
+            border-bottom: 1px solid var(--border-color);
+            color: var(--text-secondary);
+            font-weight: 500;
+            font-size: 12px;
+            text-transform: uppercase;
+        }
+
+        td {
+            padding: 12px 10px;
+            border-bottom: 1px solid var(--border-color);
+            transition: background-color 0.4s ease;
+        }
+
+        .price-up {
+            animation: flashGreen 0.7s ease;
+        }
+
+        .price-down {
+            animation: flashRed 0.7s ease;
+        }
+
+        @keyframes flashGreen {
+            0% { background-color: var(--green-glow); color: #3fb950; }
+            100% { background-color: transparent; }
+        }
+
+        @keyframes flashRed {
+            0% { background-color: var(--red-glow); color: #f85149; }
+            100% { background-color: transparent; }
+        }
+
+        .log-box {
+            background: #090d13;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            height: 220px;
+            overflow-y: auto;
+            padding: 10px;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+            font-size: 12px;
+            line-height: 1.5;
+        }
+
+        .log-entry {
+            margin-bottom: 4px;
+        }
+
+        .log-time {
+            color: var(--text-secondary);
+            margin-right: 8px;
+        }
+
+        .log-type-price { color: #58a6ff; }
+        .log-type-snapshot { color: #d29922; }
+        .log-type-subscribed { color: #3fb950; }
+        .log-type-unsubscribed { color: #f85149; }
+        .log-type-pong { color: #bc8cff; }
+        .log-type-error { color: #f85149; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Crypto Simulator — Live Price Feed</h1>
+        <div class="status-badge">
+            <span class="status-dot" id="statusDot"></span>
+            <span id="statusText">DISCONNECTED</span>
+        </div>
+    </div>
+
+    <div class="grid">
+        <!-- Connection Card -->
+        <div class="card">
+            <h2>Connection Settings</h2>
+            <div class="form-group">
+                <label for="jwtToken">Access JWT Token</label>
+                <input type="text" id="jwtToken" placeholder="Paste access token from /api/auth/login">
+            </div>
+            <div class="form-group">
+                <label for="initialSymbol">Initial Trading Pair</label>
+                <input type="text" id="initialSymbol" value="BTCUSDT">
+            </div>
+            <div class="btn-group">
+                <button class="btn-primary" id="btnConnect" onclick="connectWS()">Connect</button>
+                <button class="btn-danger" id="btnDisconnect" onclick="disconnectWS()" disabled>Disconnect</button>
+                <button class="btn-secondary" id="btnPing" onclick="sendPing()" disabled>Ping</button>
+            </div>
+        </div>
+
+        <!-- Dynamic Subscription Card -->
+        <div class="card">
+            <h2>Dynamic Subscriptions</h2>
+            <div class="form-group">
+                <label for="manageSymbol">Symbol</label>
+                <input type="text" id="manageSymbol" placeholder="e.g. ETHUSDT, SOLUSDT">
+            </div>
+            <div class="btn-group">
+                <button class="btn-primary" id="btnSubscribe" onclick="subscribeSymbol()" disabled>Subscribe</button>
+                <button class="btn-secondary" id="btnUnsubscribe" onclick="unsubscribeSymbol()" disabled>Unsubscribe</button>
+            </div>
+            <div style="margin-top: 14px; font-size: 12px; color: var(--text-secondary);">
+                Active Subscriptions: <span id="subCount" style="color: var(--text-primary); font-weight: 600;">0</span> / 20
+            </div>
+        </div>
+    </div>
+
+    <!-- Live Prices Table -->
+    <div class="card" style="margin-bottom: 20px;">
+        <h2>Live Price Ticker Table</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Symbol</th>
+                    <th>Price (USD)</th>
+                    <th>Event Time (UTC)</th>
+                    <th>Age</th>
+                    <th>Type</th>
+                </tr>
+            </thead>
+            <tbody id="tickerBody">
+                <tr id="emptyRow">
+                    <td colspan="5" style="text-align: center; color: var(--text-secondary); padding: 20px;">
+                        No ticks received yet. Connect to start streaming.
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Live Event Log -->
+    <div class="card">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+            <h2>Live WebSocket Event Log</h2>
+            <button class="btn-secondary" style="padding: 4px 10px; font-size: 11px;" onclick="clearLog()">Clear Log</button>
+        </div>
+        <div class="log-box" id="logBox"></div>
+    </div>
+
+    <script>
+        let ws = null;
+        const prices = {}; // symbol -> { price, element }
+        const subscribedSymbols = new Set();
+
+        const statusDot = document.getElementById("statusDot");
+        const statusText = document.getElementById("statusText");
+        const btnConnect = document.getElementById("btnConnect");
+        const btnDisconnect = document.getElementById("btnDisconnect");
+        const btnPing = document.getElementById("btnPing");
+        const btnSubscribe = document.getElementById("btnSubscribe");
+        const btnUnsubscribe = document.getElementById("btnUnsubscribe");
+        const logBox = document.getElementById("logBox");
+        const tickerBody = document.getElementById("tickerBody");
+        const subCount = document.getElementById("subCount");
+
+        function setStatus(status, text) {
+            statusDot.className = "status-dot " + status;
+            statusText.innerText = text;
+        }
+
+        function addLog(msg, type = "info") {
+            const time = new Date().toISOString().substring(11, 23);
+            const div = document.createElement("div");
+            div.className = "log-entry";
+            div.innerHTML = `<span class="log-time">[${time}]</span> <span class="log-type-${type}">${escapeHtml(msg)}</span>`;
+            logBox.appendChild(div);
+            logBox.scrollTop = logBox.scrollHeight;
+        }
+
+        function clearLog() {
+            logBox.innerHTML = "";
+        }
+
+        function escapeHtml(str) {
+            return String(str).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        }
+
+        function connectWS() {
+            const token = document.getElementById("jwtToken").value.trim();
+            const symbol = document.getElementById("initialSymbol").value.trim().toUpperCase();
+
+            if (!token) {
+                alert("Please provide an access JWT token.");
+                return;
+            }
+            if (!symbol) {
+                alert("Please enter a symbol.");
+                return;
+            }
+
+            const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+            const wsUrl = `${protocol}//${window.location.host}/ws/prices/${encodeURIComponent(symbol)}?token=${encodeURIComponent(token)}`;
+
+            setStatus("connecting", "CONNECTING...");
+            btnConnect.disabled = true;
+
+            ws = new WebSocket(wsUrl);
+
+            ws.onopen = () => {
+                setStatus("connected", "CONNECTED");
+                btnDisconnect.disabled = false;
+                btnPing.disabled = false;
+                btnSubscribe.disabled = false;
+                btnUnsubscribe.disabled = false;
+                subscribedSymbols.add(symbol);
+                updateSubCount();
+                addLog(`WebSocket connection opened to /ws/prices/${symbol}`, "subscribed");
+            };
+
+            ws.onmessage = (event) => {
+                try {
+                    const data = jsonParseSafe(event.data);
+                    if (!data) return;
+
+                    const type = data.type || "unknown";
+                    addLog(event.data, type);
+
+                    if (type === "price" || type === "snapshot") {
+                        handlePriceTick(data);
+                    } else if (type === "subscribed") {
+                        subscribedSymbols.add(data.symbol);
+                        updateSubCount();
+                    } else if (type === "unsubscribed") {
+                        subscribedSymbols.delete(data.symbol);
+                        updateSubCount();
+                    }
+                } catch (e) {
+                    addLog("Parse error: " + e.message, "error");
+                }
+            };
+
+            ws.onerror = (err) => {
+                addLog("WebSocket error observed", "error");
+            };
+
+            ws.onclose = (event) => {
+                setStatus("disconnected", "DISCONNECTED");
+                btnConnect.disabled = false;
+                btnDisconnect.disabled = true;
+                btnPing.disabled = true;
+                btnSubscribe.disabled = true;
+                btnUnsubscribe.disabled = true;
+                subscribedSymbols.clear();
+                updateSubCount();
+                addLog(`WebSocket closed (code: ${event.code}, reason: "${event.reason || 'None'}")`, "error");
+            };
+        }
+
+        function disconnectWS() {
+            if (ws) {
+                ws.close(1000, "User initiated disconnect");
+                ws = null;
+            }
+        }
+
+        function sendPing() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ action: "ping" }));
+                addLog('Sent: {"action": "ping"}', "info");
+            }
+        }
+
+        function subscribeSymbol() {
+            const sym = document.getElementById("manageSymbol").value.trim().toUpperCase();
+            if (!sym) return;
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ action: "subscribe", symbol: sym }));
+                addLog(`Sent: {"action": "subscribe", "symbol": "${sym}"}`, "info");
+            }
+        }
+
+        function unsubscribeSymbol() {
+            const sym = document.getElementById("manageSymbol").value.trim().toUpperCase();
+            if (!sym) return;
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ action: "unsubscribe", symbol: sym }));
+                addLog(`Sent: {"action": "unsubscribe", "symbol": "${sym}"}`, "info");
+            }
+        }
+
+        function updateSubCount() {
+            subCount.innerText = subscribedSymbols.size;
+        }
+
+        function handlePriceTick(data) {
+            const emptyRow = document.getElementById("emptyRow");
+            if (emptyRow) emptyRow.remove();
+
+            const sym = data.symbol;
+            const newPrice = parseFloat(data.price);
+            const priceStr = data.price;
+            const timeStr = data.ts || data.event_time || "";
+            const ageStr = data.age_ms !== undefined ? `${data.age_ms} ms` : "live";
+            const typeStr = data.type;
+
+            let prevPrice = prices[sym]?.rawPrice ?? null;
+            let row = document.getElementById("row-" + sym);
+
+            if (!row) {
+                row = document.createElement("tr");
+                row.id = "row-" + sym;
+                row.innerHTML = `
+                    <td style="font-weight: 600;">${sym}</td>
+                    <td id="price-${sym}" style="font-family: ui-monospace, monospace;">${priceStr}</td>
+                    <td id="time-${sym}" style="color: var(--text-secondary); font-size: 13px;">${timeStr}</td>
+                    <td id="age-${sym}" style="color: var(--text-secondary); font-size: 13px;">${ageStr}</td>
+                    <td id="type-${sym}" style="font-size: 12px; text-transform: uppercase;">${typeStr}</td>
+                `;
+                tickerBody.appendChild(row);
+            } else {
+                const priceCell = document.getElementById("price-" + sym);
+                priceCell.innerText = priceStr;
+                document.getElementById("time-" + sym).innerText = timeStr;
+                document.getElementById("age-" + sym).innerText = ageStr;
+                document.getElementById("type-" + sym).innerText = typeStr;
+
+                // Flash animation
+                priceCell.classList.remove("price-up", "price-down");
+                void priceCell.offsetWidth; // trigger reflow
+                if (prevPrice !== null) {
+                    if (newPrice > prevPrice) {
+                        priceCell.classList.add("price-up");
+                    } else if (newPrice < prevPrice) {
+                        priceCell.classList.add("price-down");
+                    }
+                }
+            }
+
+            prices[sym] = { rawPrice: newPrice };
+        }
+
+        function jsonParseSafe(str) {
+            try { return JSON.parse(str); } catch(e) { return null; }
+        }
+    </script>
+</body>
+</html>
+

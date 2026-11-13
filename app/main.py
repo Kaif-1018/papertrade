@@ -4,10 +4,13 @@ import asyncio
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
+from pathlib import Path
+
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 import structlog
 
@@ -15,8 +18,10 @@ from app.core.config import get_settings
 from app.core.exceptions import AppException
 from app.core.logging import setup_logging
 from app.core.redis import close_redis, init_redis
-from app.routers import admin, auth, health, prices, trade
+from app.routers import admin, auth, health, prices, trade, ws_prices
+from app.services.price_broadcaster import PriceBroadcasterService
 from app.services.price_feed import PriceFeedService
+from app.services.ws_manager import ConnectionManager
 
 logger = structlog.stdlib.get_logger(__name__)
 
@@ -33,6 +38,21 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     settings = get_settings()
     feed_service: PriceFeedService | None = None
     feed_task: asyncio.Task[None] | None = None
+    broadcaster_service: PriceBroadcasterService | None = None
+    broadcaster_task: asyncio.Task[None] | None = None
+
+    # WebSocket connection manager singleton
+    ws_manager = ConnectionManager(
+        max_subscriptions_per_conn=settings.WS_MAX_SUBSCRIPTIONS_PER_CLIENT
+    )
+    app.state.ws_manager = ws_manager
+
+    # Start Redis price broadcaster background task
+    broadcaster_service = PriceBroadcasterService(manager=ws_manager)
+    broadcaster_task = asyncio.create_task(broadcaster_service.run())
+    app.state.price_broadcaster = broadcaster_service
+    app.state.price_broadcaster_task = broadcaster_task
+    logger.info("price_broadcaster_task_started")
 
     if settings.ENABLE_PRICE_FEED:
         feed_service = PriceFeedService(
@@ -45,6 +65,16 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         logger.info("price_feed_task_started")
 
     yield
+
+    if broadcaster_service is not None:
+        await broadcaster_service.stop()
+
+    if broadcaster_task is not None:
+        broadcaster_task.cancel()
+        try:
+            await broadcaster_task
+        except asyncio.CancelledError:
+            pass
 
     if feed_service is not None:
         await feed_service.stop()
@@ -128,5 +158,11 @@ def create_app() -> FastAPI:
     app.include_router(admin.router)
     app.include_router(prices.router)
     app.include_router(trade.router)
+    app.include_router(ws_prices.router)
+
+    # Static files (WS test client, dashboard, etc.)
+    static_dir = Path(__file__).resolve().parent.parent / "static"
+    if static_dir.exists():
+        app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
     return app
