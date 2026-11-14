@@ -1,6 +1,16 @@
 """Routers module."""
 
-from app.routers import admin, auth, health, portfolio, prices, trade, ws_portfolio, ws_prices
+from app.routers import (
+    admin,
+    auth,
+    health,
+    portfolio,
+    prices,
+    trade,
+    watchlist,
+    ws_portfolio,
+    ws_prices,
+)
 
 __all__ = [
     "admin",
@@ -9,6 +19,7 @@ __all__ = [
     "portfolio",
     "prices",
     "trade",
+    "watchlist",
     "ws_portfolio",
     "ws_prices",
 ]

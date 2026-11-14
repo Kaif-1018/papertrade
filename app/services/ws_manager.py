@@ -49,6 +49,11 @@ class ConnectionManager:
         # Per-connection topic subscription cap
         self.max_subscriptions_per_conn = max_subscriptions_per_conn
 
+        # Watchlist tracking per connection
+        self.ws_explicit_topics: dict[Any, set[str]] = {}
+        self.ws_watchlist_topics: dict[Any, set[str]] = {}
+        self.ws_watchlist_mode: dict[Any, bool] = {}
+
     async def connect(self, ws: Any, user_id: UUID | None = None) -> None:
         """Register a new WebSocket connection."""
         # Accept if Starlette WebSocket is in CONNECTING state
@@ -68,6 +73,9 @@ class ConnectionManager:
         self._active_connections.add(ws)
         self.ws_to_topics[ws] = set()
         self.ws_to_user[ws] = user_id
+        self.ws_explicit_topics[ws] = set()
+        self.ws_watchlist_topics[ws] = set()
+        self.ws_watchlist_mode[ws] = False
 
         if user_id is not None:
             self.user_connections.setdefault(user_id, set()).add(ws)
@@ -76,6 +84,11 @@ class ConnectionManager:
 
     def disconnect(self, ws: Any) -> Any:
         """Idempotently unregister a WebSocket and remove from all topics and user maps."""
+        # Clean up watchlist tracking
+        self.ws_explicit_topics.pop(ws, None)
+        self.ws_watchlist_topics.pop(ws, None)
+        self.ws_watchlist_mode.pop(ws, None)
+
         # Remove from topics
         subscribed_topics = self.ws_to_topics.pop(ws, None)
         if subscribed_topics:
@@ -109,7 +122,7 @@ class ConnectionManager:
         logger.debug("ws_disconnected", extra={"user_id": str(user_id) if user_id else None})
         return _DoneAwaitable()
 
-    def subscribe(self, ws: Any, symbol: str) -> bool:
+    def subscribe(self, ws: Any, symbol: str, is_explicit: bool = True) -> bool:
         """Subscribe *ws* to *symbol*.
 
         Returns False if the client has reached the per-connection subscription cap.
@@ -122,11 +135,18 @@ class ConnectionManager:
 
         self.topics.setdefault(sym, set()).add(ws)
         current_topics.add(sym)
+        if is_explicit:
+            self.ws_explicit_topics.setdefault(ws, set()).add(sym)
         return True
 
     def unsubscribe(self, ws: Any, symbol: str) -> bool:
         """Unsubscribe *ws* from *symbol*."""
         sym = symbol.strip().upper()
+
+        if ws in self.ws_explicit_topics:
+            self.ws_explicit_topics[ws].discard(sym)
+        if ws in self.ws_watchlist_topics:
+            self.ws_watchlist_topics[ws].discard(sym)
 
         subscribers = self.topics.get(sym)
         if subscribers is not None:
@@ -138,6 +158,145 @@ class ConnectionManager:
             self.ws_to_topics[ws].discard(sym)
 
         return True
+
+    def subscribe_watchlist(self, ws: Any, symbols: list[str]) -> bool:
+        """Subscribe *ws* to all symbols in *symbols* as watchlist items.
+
+        Checks the per-connection topic cap against the union of existing and new topics.
+        Returns False if the total topic count exceeds max_subscriptions_per_conn.
+        """
+        current_topics = self.ws_to_topics.setdefault(ws, set())
+        norm_symbols = {s.strip().upper() for s in symbols if s.strip()}
+        combined_topics = current_topics | norm_symbols
+
+        if len(combined_topics) > self.max_subscriptions_per_conn:
+            return False
+
+        self.ws_watchlist_mode[ws] = True
+        watchlist_set = self.ws_watchlist_topics.setdefault(ws, set())
+
+        for sym in norm_symbols:
+            watchlist_set.add(sym)
+            self.topics.setdefault(sym, set()).add(ws)
+            current_topics.add(sym)
+
+        return True
+
+    def unsubscribe_watchlist(self, ws: Any) -> list[str]:
+        """Unsubscribe *ws* from watchlist topics, preserving explicit subscriptions.
+
+        Returns the list of symbols that were unsubscribed from this connection.
+        """
+        self.ws_watchlist_mode[ws] = False
+        watchlist_set = self.ws_watchlist_topics.get(ws, set())
+        explicit_set = self.ws_explicit_topics.get(ws, set())
+        current_topics = self.ws_to_topics.setdefault(ws, set())
+
+        unsubscribed: list[str] = []
+        for sym in list(watchlist_set):
+            watchlist_set.discard(sym)
+            if sym not in explicit_set:
+                subscribers = self.topics.get(sym)
+                if subscribers is not None:
+                    subscribers.discard(ws)
+                    if not subscribers:
+                        self.topics.pop(sym, None)
+                current_topics.discard(sym)
+                unsubscribed.append(sym)
+
+        return unsubscribed
+
+    async def on_watchlist_item_added(self, user_id: UUID, symbol: str) -> None:
+        """Live sync: Called when *symbol* is added to *user_id*'s watchlist over REST.
+
+        Subscribes all open price connections for this user with watchlist mode enabled
+        and pushes {"type": "watchlist_changed", "action": "added", "symbol": ...}.
+        """
+        sym = symbol.strip().upper()
+        conns = list(self.user_connections.get(user_id, set()))
+        if not conns:
+            return
+
+        message = {
+            "type": "watchlist_changed",
+            "action": "added",
+            "symbol": sym,
+        }
+
+        async def _update(ws: Any) -> None:
+            if not self.ws_watchlist_mode.get(ws, False):
+                return
+
+            current_topics = self.ws_to_topics.setdefault(ws, set())
+            if sym not in current_topics:
+                if len(current_topics) < self.max_subscriptions_per_conn:
+                    self.topics.setdefault(sym, set()).add(ws)
+                    current_topics.add(sym)
+                    self.ws_watchlist_topics.setdefault(ws, set()).add(sym)
+            else:
+                self.ws_watchlist_topics.setdefault(ws, set()).add(sym)
+
+            try:
+                if hasattr(ws, "send_json"):
+                    await asyncio.wait_for(ws.send_json(message), timeout=2.0)
+                elif hasattr(ws, "send_text"):
+                    await asyncio.wait_for(ws.send_text(json.dumps(message)), timeout=2.0)
+            except Exception:
+                self.disconnect(ws)
+
+        await asyncio.gather(*(_update(ws) for ws in conns), return_exceptions=True)
+
+    async def on_watchlist_item_removed(self, user_id: UUID, symbol: str) -> None:
+        """Live sync: Called when *symbol* is removed from *user_id*'s watchlist over REST.
+
+        Immediately unregisters *symbol* from matching price connections (stopping ticks
+        in the same event loop turn) and pushes {"type": "watchlist_changed", "action": "removed", ...}.
+        """
+        sym = symbol.strip().upper()
+        conns = list(self.user_connections.get(user_id, set()))
+        if not conns:
+            return
+
+        # 1. Stop ticks immediately and synchronously
+        watchlist_conns_to_notify: list[Any] = []
+        for ws in conns:
+            if not self.ws_watchlist_mode.get(ws, False):
+                continue
+            watchlist_conns_to_notify.append(ws)
+
+            if ws in self.ws_watchlist_topics:
+                self.ws_watchlist_topics[ws].discard(sym)
+
+            # If not explicitly subscribed by client, drop from topics
+            if sym not in self.ws_explicit_topics.get(ws, set()):
+                subs = self.topics.get(sym)
+                if subs is not None:
+                    subs.discard(ws)
+                    if not subs:
+                        self.topics.pop(sym, None)
+                if ws in self.ws_to_topics:
+                    self.ws_to_topics[ws].discard(sym)
+
+        if not watchlist_conns_to_notify:
+            return
+
+        # 2. Asynchronously notify connections
+        message = {
+            "type": "watchlist_changed",
+            "action": "removed",
+            "symbol": sym,
+        }
+
+        async def _notify(ws: Any) -> None:
+            try:
+                if hasattr(ws, "send_json"):
+                    await asyncio.wait_for(ws.send_json(message), timeout=2.0)
+                elif hasattr(ws, "send_text"):
+                    await asyncio.wait_for(ws.send_text(json.dumps(message)), timeout=2.0)
+            except Exception:
+                self.disconnect(ws)
+
+        await asyncio.gather(*(_notify(ws) for ws in watchlist_conns_to_notify), return_exceptions=True)
 
     async def broadcast(self, symbol: str, message: dict, timeout: float = 2.0) -> int:
         """Fan out *message* concurrently to all subscribers of *symbol*.
@@ -198,6 +357,13 @@ class ConnectionManager:
         return {sym: len(subs) for sym, subs in self.topics.items() if subs}
 
 
-def get_ws_manager(websocket: WebSocket) -> ConnectionManager:
+from starlette.requests import HTTPConnection
+
+
+def get_ws_manager(conn: HTTPConnection) -> ConnectionManager:
     """FastAPI dependency to retrieve the singleton ConnectionManager from app.state."""
-    return websocket.app.state.ws_manager
+    manager = getattr(conn.app.state, "ws_manager", None)
+    if manager is None:
+        manager = ConnectionManager()
+        conn.app.state.ws_manager = manager
+    return manager

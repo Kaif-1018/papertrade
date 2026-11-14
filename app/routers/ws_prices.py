@@ -4,15 +4,18 @@ from datetime import datetime, timezone
 import json
 
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 import structlog
 
 from app.api.ws_auth import WebSocketAuthError, authenticate_websocket
+from app.core.database import async_session_factory
 from app.core.price_registry import (
     PriceUnavailable,
     StalePrice,
     get_price,
     is_supported,
 )
+from app.services.watchlist_service import WatchlistService
 from app.services.ws_manager import ConnectionManager, get_ws_manager
 
 logger = structlog.stdlib.get_logger(__name__)
@@ -143,6 +146,54 @@ async def ws_prices_endpoint(
                 norm_target = str(target_sym).strip().upper()
                 manager.unsubscribe(websocket, norm_target)
                 await websocket.send_json({"type": "unsubscribed", "symbol": norm_target})
+
+            elif action == "subscribe_watchlist":
+                session_factory: async_sessionmaker[AsyncSession] = getattr(
+                    websocket.app.state, "session_factory", async_session_factory
+                )
+                async with session_factory() as session:
+                    service = WatchlistService(session, manager=manager)
+                    symbols = await service.get_watchlist_symbols(user_id)
+
+                ok = manager.subscribe_watchlist(websocket, symbols)
+                if not ok:
+                    await websocket.send_json({
+                        "type": "error",
+                        "code": "SUBSCRIPTION_LIMIT",
+                        "message": (
+                            f"Maximum topic subscriptions "
+                            f"({manager.max_subscriptions_per_conn}) reached"
+                        ),
+                    })
+                    continue
+
+                await websocket.send_json({
+                    "type": "watchlist_subscribed",
+                    "symbols": symbols,
+                })
+
+                # Send snapshot for newly subscribed watchlist symbols
+                for sym in symbols:
+                    try:
+                        entry = get_price(sym)
+                        now = datetime.now(timezone.utc)
+                        age_ms = int((now - entry.received_at).total_seconds() * 1000)
+                        await websocket.send_json({
+                            "type": "snapshot",
+                            "symbol": entry.symbol,
+                            "price": str(entry.price),
+                            "event_time": entry.event_time.isoformat(),
+                            "age_ms": age_ms,
+                        })
+                    except Exception:
+                        pass
+
+            elif action == "unsubscribe_watchlist":
+                unsubbed = manager.unsubscribe_watchlist(websocket)
+                await websocket.send_json({
+                    "type": "watchlist_unsubscribed",
+                    "symbols": unsubbed,
+                })
 
             else:
                 await websocket.send_json({

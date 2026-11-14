@@ -106,6 +106,39 @@ def get_price_safe(
         return None
 
 
+def get_price_status_safe(
+    symbol: str,
+    clock: Callable[[], datetime] | None = None,
+    stale_seconds: int | float | None = None,
+) -> tuple[Decimal | None, int | None, bool]:
+    """Safely retrieve price, age_ms, and stale status for a symbol.
+
+    Returns:
+        (price, age_ms, stale)
+        - If symbol is missing from registry: (None, None, True)
+        - If symbol is present but older than stale_seconds: (entry.price, age_ms, True)
+        - If symbol is present and fresh: (entry.price, age_ms, False)
+    Never raises.
+    """
+    normalized_sym = symbol.strip().upper()
+    if normalized_sym not in _registry:
+        return None, None, True
+
+    entry = _registry[normalized_sym]
+    now_fn = clock or (lambda: datetime.now(timezone.utc))
+    now = now_fn()
+
+    settings = get_settings()
+    max_stale = (
+        settings.PRICE_STALE_SECONDS if stale_seconds is None else stale_seconds
+    )
+    age_seconds = (now - entry.received_at).total_seconds()
+    age_ms = max(0, int(age_seconds * 1000))
+    is_stale = age_seconds > max_stale
+
+    return entry.price, age_ms, is_stale
+
+
 def get_all() -> dict[str, PriceEntry]:
     """Return a shallow copy of all current registry entries."""
     return _registry.copy()

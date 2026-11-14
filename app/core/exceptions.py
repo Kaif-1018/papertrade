@@ -139,3 +139,31 @@ class InvalidQuantity(AppException):
     status_code = 422
     code = "INVALID_QUANTITY"
     message = "Invalid trade quantity"
+
+
+# ---------------------------------------------------------------------------
+# Day 10: Watchlist Exceptions
+# ---------------------------------------------------------------------------
+
+class WatchlistFullError(AppException):
+    """Raised when a user attempts to exceed WATCHLIST_MAX_ITEMS."""
+
+    status_code = 422
+    code = "WATCHLIST_FULL"
+    message = "Watchlist has reached maximum capacity"
+
+    def __init__(self, max_items: int) -> None:
+        super().__init__(
+            message=f"Watchlist has reached maximum capacity of {max_items} items",
+            code="WATCHLIST_FULL",
+            status_code=422,
+            details={"max": max_items},
+        )
+
+
+class NotInWatchlistError(AppException):
+    """Raised when removing a symbol that is not in the user's watchlist."""
+
+    status_code = 404
+    code = "NOT_IN_WATCHLIST"
+    message = "Symbol is not in your watchlist"

@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     ALLOWED_ORIGINS: str = "*"
     WS_MAX_SUBSCRIPTIONS_PER_CLIENT: int = 20
     PORTFOLIO_REFRESH_INTERVAL_SECONDS: float = 5.0
+    WATCHLIST_MAX_ITEMS: int = 25
 
     model_config = {
         "env_file": ".env",

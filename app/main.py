@@ -26,6 +26,7 @@ from app.routers import (
     portfolio,
     prices,
     trade,
+    watchlist,
     ws_portfolio,
     ws_prices,
 )
@@ -181,6 +182,7 @@ def create_app() -> FastAPI:
     app.include_router(prices.router)
     app.include_router(trade.router)
     app.include_router(portfolio.router)
+    app.include_router(watchlist.router)
     app.include_router(ws_prices.router)
     app.include_router(ws_portfolio.router)
 

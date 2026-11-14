@@ -350,6 +350,14 @@
                     <button class="btn-secondary" onclick="subscribeSymbol()">Subscribe</button>
                     <button class="btn-secondary" onclick="unsubscribeSymbol()">Unsubscribe</button>
                 </div>
+                <div class="btn-group" style="margin-top: 8px;">
+                    <button class="btn-secondary" onclick="subscribeWatchlist()">Sub Watchlist (WS)</button>
+                    <button class="btn-secondary" onclick="unsubscribeWatchlist()">Unsub Watchlist (WS)</button>
+                </div>
+                <div class="btn-group" style="margin-top: 8px;">
+                    <button class="btn-primary" onclick="restAddToWatchlist()">+ Watchlist (REST)</button>
+                    <button class="btn-danger" onclick="restRemoveFromWatchlist()">- Watchlist (REST)</button>
+                </div>
                 <div style="margin-top: 16px; font-size: 13px; color: var(--text-secondary);">
                     Active Subscriptions: <span id="subCount" style="color: var(--text-primary); font-weight: 600;">0</span> / 20
                 </div>
@@ -555,6 +563,23 @@
                     subscribedSymbols.delete(data.symbol);
                     document.getElementById("subCount").innerText = subscribedSymbols.size;
                     addLog("logBoxPrices", `Unsubscribed from ${data.symbol}`, "info");
+                } else if (data.type === "watchlist_subscribed") {
+                    if (Array.isArray(data.symbols)) {
+                        data.symbols.forEach(s => subscribedSymbols.add(s));
+                    }
+                    document.getElementById("subCount").innerText = subscribedSymbols.size;
+                    addLog("logBoxPrices", `Watchlist subscribed: [${(data.symbols || []).join(", ")}]`, "success");
+                } else if (data.type === "watchlist_unsubscribed") {
+                    addLog("logBoxPrices", `Watchlist unsubscribed`, "info");
+                } else if (data.type === "watchlist_changed") {
+                    if (data.action === "added") {
+                        subscribedSymbols.add(data.symbol);
+                        addLog("logBoxPrices", `Watchlist live sync: ADDED ${data.symbol}`, "success");
+                    } else if (data.action === "removed") {
+                        subscribedSymbols.delete(data.symbol);
+                        addLog("logBoxPrices", `Watchlist live sync: REMOVED ${data.symbol}`, "info");
+                    }
+                    document.getElementById("subCount").innerText = subscribedSymbols.size;
                 } else {
                     addLog("logBoxPrices", `Received: ${event.data}`);
                 }
@@ -598,6 +623,55 @@
             const sym = document.getElementById("manageSymbol").value.trim().toUpperCase();
             if (sym && wsPrices && wsPrices.readyState === WebSocket.OPEN) {
                 wsPrices.send(JSON.stringify({ action: "unsubscribe", symbol: sym }));
+            }
+        }
+
+        function subscribeWatchlist() {
+            if (wsPrices && wsPrices.readyState === WebSocket.OPEN) {
+                wsPrices.send(JSON.stringify({ action: "subscribe_watchlist" }));
+                addLog("logBoxPrices", 'Sent: {"action": "subscribe_watchlist"}');
+            } else {
+                alert("Please connect to price WebSocket first.");
+            }
+        }
+
+        function unsubscribeWatchlist() {
+            if (wsPrices && wsPrices.readyState === WebSocket.OPEN) {
+                wsPrices.send(JSON.stringify({ action: "unsubscribe_watchlist" }));
+                addLog("logBoxPrices", 'Sent: {"action": "unsubscribe_watchlist"}');
+            } else {
+                alert("Please connect to price WebSocket first.");
+            }
+        }
+
+        async function restAddToWatchlist() {
+            const token = document.getElementById("token").value.trim();
+            const symbol = (document.getElementById("manageSymbol").value || "SOLUSDT").trim().toUpperCase();
+            if (!token) { alert("Please provide JWT token."); return; }
+            try {
+                const res = await fetch(`/api/watchlist/${symbol}`, {
+                    method: "POST",
+                    headers: { "Authorization": `Bearer ${token}` }
+                });
+                const data = await res.json();
+                addLog("logBoxPrices", `REST POST /api/watchlist/${symbol} -> ${res.status}`, res.ok ? "success" : "error");
+            } catch (err) {
+                addLog("logBoxPrices", `REST POST error: ${err.message}`, "error");
+            }
+        }
+
+        async function restRemoveFromWatchlist() {
+            const token = document.getElementById("token").value.trim();
+            const symbol = (document.getElementById("manageSymbol").value || "SOLUSDT").trim().toUpperCase();
+            if (!token) { alert("Please provide JWT token."); return; }
+            try {
+                const res = await fetch(`/api/watchlist/${symbol}`, {
+                    method: "DELETE",
+                    headers: { "Authorization": `Bearer ${token}` }
+                });
+                addLog("logBoxPrices", `REST DELETE /api/watchlist/${symbol} -> ${res.status}`, res.ok ? "success" : "error");
+            } catch (err) {
+                addLog("logBoxPrices", `REST DELETE error: ${err.message}`, "error");
             }
         }
 
