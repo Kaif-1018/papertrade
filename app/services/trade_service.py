@@ -21,6 +21,7 @@ Design decisions
 """
 
 import asyncio
+from datetime import datetime, timezone
 import logging
 from decimal import Decimal, ROUND_DOWN, ROUND_HALF_UP
 from typing import TYPE_CHECKING, Any
@@ -205,6 +206,7 @@ class TradeService:
                 quantity=quantity,
                 price=exec_price,
                 total_value=total,
+                executed_at=datetime.now(timezone.utc),
             )
             self._trades.add(trade)
 
@@ -306,6 +308,7 @@ class TradeService:
                 quantity=quantity,
                 price=exec_price,
                 total_value=total,
+                executed_at=datetime.now(timezone.utc),
             )
             self._trades.add(trade)
 

@@ -2,7 +2,7 @@
 
 import enum
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 
 import sqlalchemy as sa
@@ -61,6 +61,7 @@ class Trade(Base):
     executed_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         nullable=False,
+        default=lambda: datetime.now(timezone.utc),
         server_default=func.now(),
     )
 

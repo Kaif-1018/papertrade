@@ -167,3 +167,23 @@ class NotInWatchlistError(AppException):
     status_code = 404
     code = "NOT_IN_WATCHLIST"
     message = "Symbol is not in your watchlist"
+
+
+# ---------------------------------------------------------------------------
+# Day 11: Trade History & Keyset Pagination Exceptions
+# ---------------------------------------------------------------------------
+
+class InvalidCursorError(AppException):
+    """Raised when a pagination cursor cannot be decoded or is malformed."""
+
+    status_code = 422
+    code = "INVALID_CURSOR"
+    message = "Invalid pagination cursor"
+
+
+class InvalidDateRangeError(AppException):
+    """Raised when from > to date filter range or date is invalid."""
+
+    status_code = 422
+    code = "INVALID_DATE_RANGE"
+    message = "Date range is invalid: 'from' must be earlier than or equal to 'to'"

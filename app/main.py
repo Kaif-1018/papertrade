@@ -21,11 +21,13 @@ from app.core.logging import setup_logging
 from app.core.redis import close_redis, init_redis
 from app.routers import (
     admin,
+    analytics,
     auth,
     health,
     portfolio,
     prices,
     trade,
+    trades,
     watchlist,
     ws_portfolio,
     ws_prices,
@@ -181,8 +183,10 @@ def create_app() -> FastAPI:
     app.include_router(admin.router)
     app.include_router(prices.router)
     app.include_router(trade.router)
+    app.include_router(trades.router)
     app.include_router(portfolio.router)
     app.include_router(watchlist.router)
+    app.include_router(analytics.router)
     app.include_router(ws_prices.router)
     app.include_router(ws_portfolio.router)
 
