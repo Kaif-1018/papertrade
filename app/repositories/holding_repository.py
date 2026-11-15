@@ -69,4 +69,13 @@ class HoldingRepository(BaseRepository[Holding]):
         """Stage *holding* for DELETE (does not commit)."""
         await self._session.delete(holding)
 
+    async def delete_all_by_user(self, user_id: UUID) -> int:
+        """Delete all holdings for a user (used during portfolio reset). Returns row count."""
+        from sqlalchemy import delete
+
+        stmt = delete(Holding).where(Holding.user_id == user_id)
+        result = await self._session.execute(stmt)
+        return result.rowcount or 0
+
+
 

@@ -87,6 +87,37 @@ class TradeNotifier:
                 error=str(exc),
             )
 
+    async def notify_portfolio_reset(self, user_id: UUID) -> None:
+        """Send updated portfolio view to user WebSockets after an administrative reset.
+
+        This method MUST NEVER raise: all errors are trapped and logged.
+        """
+        try:
+            factory = self.session_factory
+            if factory is None:
+                from app.core.database import async_session_factory
+
+                factory = async_session_factory
+
+            async with factory() as session:
+                service = PortfolioService(session)
+                portfolio = await service.get_portfolio(user_id)
+
+            update = {
+                "type": "portfolio_update",
+                "portfolio": portfolio.model_dump(mode="json"),
+            }
+            await self.manager.send_to_user(user_id, update)
+
+            logger.info("portfolio_reset_notification_dispatched", user_id=str(user_id))
+        except Exception as exc:
+            logger.warning(
+                "portfolio_reset_notification_failed",
+                user_id=str(user_id),
+                error=str(exc),
+            )
+
+
 
 def get_trade_notifier(request: Request) -> TradeNotifier:
     """FastAPI dependency to retrieve the singleton TradeNotifier from app.state."""

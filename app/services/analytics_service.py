@@ -10,6 +10,7 @@ import structlog
 
 from app.core.exceptions import InvalidDateRangeError
 from app.core.price_registry import get_price_safe
+from app.repositories.admin_repository import AdminRepository
 from app.repositories.holding_repository import HoldingRepository
 from app.repositories.trade_repository import TradeRepository
 from app.schemas.history import (
@@ -40,6 +41,7 @@ class AnalyticsService:
         self._session = session
         self._trades = TradeRepository(session)
         self._holdings = HoldingRepository(session)
+        self._admin = AdminRepository(session)
 
     async def get_trade_history(
         self,
@@ -113,10 +115,15 @@ class AnalyticsService:
         """Compute FIFO realised and unrealised PnL across user trades."""
         norm_symbol = symbol.strip().upper() if symbol else None
 
-        # 1. Fetch all user trades chronologically
+        # Check for administrative portfolio reset marker
+        latest_reset = await self._admin.get_latest_reset(user_id)
+        since_time = latest_reset.reset_at if latest_reset is not None else None
+
+        # 1. Fetch user trades chronologically strictly after the latest reset marker
         trades = await self._trades.list_chronological_trades(
             user_id=user_id,
             symbol=norm_symbol,
+            since=since_time,
         )
 
         # 2. Fetch database holdings for sanity check

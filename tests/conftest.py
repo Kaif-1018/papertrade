@@ -250,12 +250,16 @@ async def clean_db(test_engine):
     """Truncates all tables before and after the test to isolate committed concurrency tests."""
     async with test_engine.begin() as conn:
         await conn.execute(
-            sa_text("TRUNCATE TABLE trades, holdings, watchlist, price_snapshots, users CASCADE")
+            sa_text(
+                "TRUNCATE TABLE trades, holdings, watchlist, price_snapshots, portfolio_resets, users CASCADE"
+            )
         )
     yield
     async with test_engine.begin() as conn:
         await conn.execute(
-            sa_text("TRUNCATE TABLE trades, holdings, watchlist, price_snapshots, users CASCADE")
+            sa_text(
+                "TRUNCATE TABLE trades, holdings, watchlist, price_snapshots, portfolio_resets, users CASCADE"
+            )
         )
 
 

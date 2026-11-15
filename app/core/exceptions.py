@@ -187,3 +187,56 @@ class InvalidDateRangeError(AppException):
     status_code = 422
     code = "INVALID_DATE_RANGE"
     message = "Date range is invalid: 'from' must be earlier than or equal to 'to'"
+
+
+# ---------------------------------------------------------------------------
+# Day 13: Admin & Trading Pair Management Exceptions
+# ---------------------------------------------------------------------------
+
+class PairExistsError(AppException):
+    """Raised when adding a trading pair that already exists and is active."""
+
+    status_code = 409
+    code = "PAIR_EXISTS"
+    message = "Trading pair already exists and is active"
+
+
+class PairHasHoldingsError(AppException):
+    """Raised when attempting to deactivate a trading pair that users currently hold without force=true."""
+
+    status_code = 409
+    code = "PAIR_HAS_HOLDINGS"
+    message = "Cannot deactivate trading pair while users still hold open positions"
+
+    def __init__(self, holders_count: int) -> None:
+        super().__init__(
+            message="Cannot deactivate trading pair while users still hold open positions",
+            code="PAIR_HAS_HOLDINGS",
+            status_code=409,
+            details={"holders_count": holders_count},
+        )
+
+
+class PairNotFoundError(AppException):
+    """Raised when a requested trading pair is not found."""
+
+    status_code = 404
+    code = "PAIR_NOT_FOUND"
+    message = "Trading pair not found"
+
+
+class BinanceUnreachableError(AppException):
+    """Raised when Binance public REST API cannot be reached during symbol verification."""
+
+    status_code = 503
+    code = "BINANCE_UNREACHABLE"
+    message = "Binance public API cannot be reached"
+
+
+class InvalidBinanceSymbolError(AppException):
+    """Raised when a symbol does not exist on Binance."""
+
+    status_code = 422
+    code = "INVALID_BINANCE_SYMBOL"
+    message = "Symbol does not exist on Binance"
+

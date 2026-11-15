@@ -106,12 +106,19 @@ class TradeRepository(BaseRepository[Trade]):
         self,
         user_id: UUID,
         symbol: str | None = None,
+        since: datetime | None = None,
     ) -> list[Trade]:
-        """Fetch all trades for *user_id* sorted chronologically for FIFO PnL computation."""
+        """Fetch all trades for *user_id* sorted chronologically for FIFO PnL computation.
+
+        If *since* is provided, only trades executed strictly after that timestamp are returned.
+        """
         conditions = [Trade.user_id == user_id]
 
         if symbol:
             conditions.append(Trade.symbol == symbol.strip().upper())
+
+        if since is not None:
+            conditions.append(Trade.executed_at > since)
 
         stmt = (
             select(Trade)

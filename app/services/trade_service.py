@@ -40,7 +40,7 @@ from app.core.exceptions import (
     NotFoundError,
     SymbolNotSupported,
 )
-from app.core.price_registry import get_price, is_supported
+from app.core.price_registry import get_price, get_sell_price, is_known, is_supported
 from app.models.trade import Trade, TradeType
 from app.repositories.holding_repository import HoldingRepository
 from app.repositories.trade_repository import TradeRepository
@@ -128,11 +128,21 @@ class TradeService:
 
     @staticmethod
     def _validate_symbol(symbol: str) -> str:
-        """Validate and normalize symbol."""
+        """Validate and normalize symbol for BUY: must be actively supported."""
         if not symbol or not isinstance(symbol, str) or not symbol.strip():
             raise SymbolNotSupported("Symbol must be a non-empty string")
         sym = symbol.strip().upper()
         if not is_supported(sym):
+            raise SymbolNotSupported(f"Symbol {sym} is not supported or is inactive")
+        return sym
+
+    @staticmethod
+    def _validate_sell_symbol(symbol: str) -> str:
+        """Validate and normalize symbol for SELL: symbol must be known (active or deactivated)."""
+        if not symbol or not isinstance(symbol, str) or not symbol.strip():
+            raise SymbolNotSupported("Symbol must be a non-empty string")
+        sym = symbol.strip().upper()
+        if not is_known(sym):
             raise SymbolNotSupported(f"Symbol {sym} is not supported")
         return sym
 
@@ -270,11 +280,15 @@ class TradeService:
         4. Deduct holdings, credit balance, insert trade record.
         5. Commit and return result.
         """
-        symbol = self._validate_symbol(symbol)
+        symbol = self._validate_sell_symbol(symbol)
         self._validate_quantity(quantity)
 
         # 1. Read price BEFORE opening locks.
-        price_entry = get_price(symbol)
+        #    For active symbols, get_sell_price requires fresh prices.
+        #    For deactivated symbols, get_sell_price falls back to the last known terminal
+        #    price stored in the registry, permitting position liquidation.
+        #    If no price was ever recorded, it raises PriceUnavailable.
+        price_entry = get_sell_price(symbol)
         exec_price = price_entry.price
 
         # Credit amount: ROUND_DOWN on credits to the user per CLAUDE.md.

@@ -14,11 +14,13 @@ from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 import structlog
 
+from app.core import price_registry
 from app.core.config import get_settings
 from app.core.database import async_session_factory
 from app.core.exceptions import AppException
 from app.core.logging import setup_logging
 from app.core.redis import close_redis, init_redis
+from app.repositories.trading_pair_repository import TradingPairRepository
 from app.routers import (
     admin,
     analytics,
@@ -80,15 +82,32 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.price_broadcaster_task = broadcaster_task
     logger.info("price_broadcaster_task_started")
 
+    # Load and synchronize trading pairs from DB (DB is source of truth for active pairs)
+    try:
+        async with session_factory_to_use() as session:
+            pair_repo = TradingPairRepository(session)
+            await pair_repo.seed_missing_pairs(settings.trading_pairs_list)
+            await session.commit()
+
+            all_pairs = await pair_repo.list_all()
+            active_pairs = [p.symbol for p in all_pairs if p.is_active]
+            price_registry.set_active_symbols(active_pairs)
+            price_registry.get_known_symbols()  # ensures cache loaded
+            logger.info("trading_pairs_loaded_from_db", active_count=len(active_pairs))
+    except Exception as exc:
+        logger.warning("trading_pairs_startup_sync_failed", error=str(exc))
+        price_registry.set_active_symbols(settings.trading_pairs_list)
+
     if settings.ENABLE_PRICE_FEED:
+        feed_symbols = sorted(list(price_registry.get_active_symbols()))
         feed_service = PriceFeedService(
             url_base=settings.BINANCE_WS_URL,
-            symbols=settings.trading_pairs_list,
+            symbols=feed_symbols,
         )
         feed_task = asyncio.create_task(feed_service.run())
         app.state.price_feed = feed_service
         app.state.price_feed_task = feed_task
-        logger.info("price_feed_task_started")
+        logger.info("price_feed_task_started", symbols=feed_symbols)
 
     yield
 

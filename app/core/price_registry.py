@@ -8,7 +8,7 @@ Because no task can yield control mid-operation, dictionary mutations and lookup
 are completely race-free and thread-safe within the event loop without locks.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -30,6 +30,51 @@ class PriceEntry:
 # Module-level in-memory store: O(1) reads and writes, no awaits
 _registry: dict[str, PriceEntry] = {}
 
+# Caches the last known price for any symbol that ever received a price tick.
+# Even when a pair is deactivated and remove_price() drops it from _registry,
+# _last_known_prices preserves its terminal price so users can still execute SELLs.
+_last_known_prices: dict[str, PriceEntry] = {}
+
+# DB-driven active and known trading pairs set (cached in memory, refreshed on admin operations)
+_active_symbols: set[str] = set()
+_known_symbols: set[str] = set()
+
+
+def set_active_symbols(symbols: Iterable[str]) -> None:
+    """Synchronize the in-memory active trading pairs cache from the database."""
+    global _active_symbols, _known_symbols
+    norm = {s.strip().upper() for s in symbols}
+    _active_symbols = norm
+    _known_symbols.update(norm)
+
+
+def add_active_symbol(symbol: str) -> None:
+    """Mark a symbol as actively supported in the in-memory cache."""
+    norm = symbol.strip().upper()
+    _active_symbols.add(norm)
+    _known_symbols.add(norm)
+
+
+def deactivate_symbol(symbol: str) -> None:
+    """Mark a symbol as deactivated in the in-memory cache."""
+    norm = symbol.strip().upper()
+    _active_symbols.discard(norm)
+    _known_symbols.add(norm)
+
+
+def get_active_symbols() -> set[str]:
+    """Return all currently active trading pairs."""
+    if _active_symbols:
+        return set(_active_symbols)
+    return set(get_settings().trading_pairs_list)
+
+
+def get_known_symbols() -> set[str]:
+    """Return all known trading pairs (both active and deactivated)."""
+    if _known_symbols:
+        return set(_known_symbols)
+    return get_active_symbols()
+
 
 def set_price(
     symbol: str,
@@ -39,7 +84,7 @@ def set_price(
 ) -> PriceEntry:
     """Record a newly arrived price tick in the registry.
 
-    Normalizes symbol to uppercase.
+    Normalizes symbol to uppercase and updates both live and last-known price maps.
     """
     now_fn = clock or (lambda: datetime.now(timezone.utc))
     received_at = now_fn()
@@ -52,6 +97,7 @@ def set_price(
         received_at=received_at,
     )
     _registry[normalized_sym] = entry
+    _last_known_prices[normalized_sym] = entry
     return entry
 
 
@@ -89,6 +135,31 @@ def get_price(
     return entry
 
 
+def get_sell_price(
+    symbol: str,
+    clock: Callable[[], datetime] | None = None,
+    stale_seconds: int | float | None = None,
+) -> PriceEntry:
+    """Retrieve the price for liquidating (selling) a holding.
+
+    For active symbols, delegates to get_price() enforcing freshness.
+    For deactivated symbols where live WebSocket feeds have stopped, allows selling
+    at the terminal last known price stored in _last_known_prices without raising StalePrice.
+    If no price was ever seen, raises PriceUnavailable.
+    """
+    normalized_sym = symbol.strip().upper()
+
+    if is_supported(normalized_sym):
+        return get_price(normalized_sym, clock=clock, stale_seconds=stale_seconds)
+
+    # Inactive symbol liquidation fallback
+    entry = _registry.get(normalized_sym) or _last_known_prices.get(normalized_sym)
+    if entry is None:
+        raise PriceUnavailable(f"Price is unavailable for symbol {normalized_sym}")
+
+    return entry
+
+
 def get_price_safe(
     symbol: str,
     clock: Callable[[], datetime] | None = None,
@@ -121,10 +192,10 @@ def get_price_status_safe(
     Never raises.
     """
     normalized_sym = symbol.strip().upper()
-    if normalized_sym not in _registry:
+    entry = _registry.get(normalized_sym) or _last_known_prices.get(normalized_sym)
+    if entry is None:
         return None, None, True
 
-    entry = _registry[normalized_sym]
     now_fn = clock or (lambda: datetime.now(timezone.utc))
     now = now_fn()
 
@@ -145,17 +216,30 @@ def get_all() -> dict[str, PriceEntry]:
 
 
 def is_supported(symbol: str) -> bool:
-    """Return True if symbol exists in settings.TRADING_PAIRS."""
+    """Return True if symbol is active in DB-driven trading pairs (or default settings list)."""
     normalized_sym = symbol.strip().upper()
+    if _active_symbols:
+        return normalized_sym in _active_symbols
     return normalized_sym in get_settings().trading_pairs_list
 
 
+def is_known(symbol: str) -> bool:
+    """Return True if symbol is known in the system (active or deactivated)."""
+    normalized_sym = symbol.strip().upper()
+    if _known_symbols:
+        return normalized_sym in _known_symbols
+    return is_supported(normalized_sym)
+
+
 def remove_price(symbol: str) -> bool:
-    """Remove a symbol from the registry. Returns True if removed."""
+    """Remove a symbol from live registry while retaining terminal price in _last_known_prices."""
     normalized_sym = symbol.strip().upper()
     return _registry.pop(normalized_sym, None) is not None
 
 
 def clear() -> None:
-    """Wipe all registry entries (used for test isolation)."""
+    """Wipe all registry entries and last known prices (used for test isolation)."""
     _registry.clear()
+    _last_known_prices.clear()
+    _active_symbols.clear()
+    _known_symbols.clear()

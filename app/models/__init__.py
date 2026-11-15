@@ -2,17 +2,21 @@
 
 from app.models.base import Base
 from app.models.holding import Holding
+from app.models.portfolio_reset import PortfolioReset
 from app.models.price_snapshot import PriceSnapshot
 from app.models.trade import Trade, TradeType
+from app.models.trading_pair import TradingPair
 from app.models.user import User, UserRole
 from app.models.watchlist import Watchlist
 
 __all__ = [
     "Base",
     "Holding",
+    "PortfolioReset",
     "PriceSnapshot",
     "Trade",
     "TradeType",
+    "TradingPair",
     "User",
     "UserRole",
     "Watchlist",
