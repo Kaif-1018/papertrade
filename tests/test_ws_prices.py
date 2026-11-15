@@ -269,6 +269,11 @@ def test_ws_disconnect_cleans_up_bookkeeping(test_app, valid_token):
             assert manager.topic_counts().get("BTCUSDT") == 1
 
         # After exiting context, socket is closed and bookkeeping is pruned
+        for _ in range(50):
+            if manager.active_count() == 0:
+                break
+            time.sleep(0.01)
+
         assert manager.active_count() == 0
         assert "BTCUSDT" not in manager.topics
 

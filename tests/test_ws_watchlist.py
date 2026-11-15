@@ -269,6 +269,11 @@ def test_disconnect_cleans_up_bookkeeping(test_app):
             assert len(manager.ws_watchlist_topics) > 0
 
         # After context exit, disconnect has completed
+        for _ in range(50):
+            if manager.active_count() == initial_active:
+                break
+            time.sleep(0.01)
+
         assert manager.active_count() == initial_active
         assert len(manager.ws_watchlist_topics) == 0
         assert len(manager.ws_explicit_topics) == 0

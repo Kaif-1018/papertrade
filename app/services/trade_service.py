@@ -32,6 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 if TYPE_CHECKING:
     from app.services.notifier import TradeNotifier
 
+from app.core.cache import invalidate_leaderboard
 from app.core.exceptions import (
     InsufficientFunds,
     InsufficientHoldings,
@@ -108,6 +109,22 @@ class TradeService:
             task.add_done_callback(_log_notification_task_result)
         except Exception as exc:
             logger.warning("failed_to_spawn_trade_notification_task", extra={"error": str(exc)})
+
+    def _fire_leaderboard_invalidation(self) -> None:
+        """Dispatch post-commit leaderboard cache invalidation asynchronously.
+
+        Trade-off:
+            A trade can make the cache up to 30 seconds stale for OTHER users' prices moving,
+            which is acceptable, but a user's own trade should show up immediately thanks to
+            invalidation.
+        """
+        try:
+            task = asyncio.create_task(invalidate_leaderboard())
+            _active_notification_tasks.add(task)
+            task.add_done_callback(_active_notification_tasks.discard)
+            task.add_done_callback(_log_notification_task_result)
+        except Exception as exc:
+            logger.warning("failed_to_spawn_leaderboard_invalidation_task", extra={"error": str(exc)})
 
     @staticmethod
     def _validate_symbol(symbol: str) -> str:
@@ -222,8 +239,9 @@ class TradeService:
             await self._session.rollback()
             raise
 
-        # Post-commit notification: strictly fire-and-forget, never blocks response
+        # Post-commit hooks: strictly fire-and-forget, never blocks response
         self._fire_notification(user_id=user_id, trade=result.trade, balance=result.balance)
+        self._fire_leaderboard_invalidation()
 
         logger.info(
             "trade_executed",
@@ -323,8 +341,9 @@ class TradeService:
             await self._session.rollback()
             raise
 
-        # Post-commit notification: strictly fire-and-forget, never blocks response
+        # Post-commit hooks: strictly fire-and-forget, never blocks response
         self._fire_notification(user_id=user_id, trade=result.trade, balance=result.balance)
+        self._fire_leaderboard_invalidation()
 
         logger.info(
             "trade_executed",
