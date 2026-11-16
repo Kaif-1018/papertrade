@@ -6,12 +6,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_current_user
 from app.core.database import get_db
 from app.core.price_registry import get_price_status_safe
+from app.core.rate_limit import rate_limit
 from app.models.user import User
 from app.schemas.watchlist import WatchlistItemOut
 from app.services.watchlist_service import WatchlistService
 from app.services.ws_manager import ConnectionManager, get_ws_manager
 
-router = APIRouter(prefix="/api/watchlist", tags=["watchlist"])
+router = APIRouter(
+    prefix="/api/watchlist",
+    tags=["watchlist"],
+    dependencies=[Depends(rate_limit("general_api", limit=120, window_seconds=60, key="user"))],
+)
 
 
 @router.get(

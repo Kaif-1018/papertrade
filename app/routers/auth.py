@@ -5,6 +5,7 @@ from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
+from app.core.rate_limit import rate_limit
 from app.core.redis import get_redis
 from app.models.user import User
 from app.schemas.auth import (
@@ -24,6 +25,7 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
     response_model=UserResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Register a new user",
+    dependencies=[Depends(rate_limit("register", limit=10, window_seconds=60, key="ip", fail_closed=True))],
 )
 async def register(
     data: UserRegisterRequest,
@@ -41,6 +43,7 @@ async def register(
     response_model=TokenResponse,
     status_code=status.HTTP_200_OK,
     summary="User login",
+    dependencies=[Depends(rate_limit("login", limit=10, window_seconds=60, key="ip", fail_closed=True))],
 )
 async def login(
     data: UserLoginRequest,

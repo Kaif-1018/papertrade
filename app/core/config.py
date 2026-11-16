@@ -2,12 +2,18 @@
 
 from decimal import Decimal
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
     """All config is read from .env / environment variables."""
+
+    # Environment & Deployment
+    ENVIRONMENT: str = "development"  # development, test, staging, production
+    TRUST_PROXY: bool = False
+    LOG_FORMAT: str = "console"  # console, json
+    LOG_LEVEL: str = "INFO"
 
     # Database
     DATABASE_URL: str = "postgresql+asyncpg://crypto:crypto@postgres:5432/crypto_trading"
@@ -29,6 +35,13 @@ class Settings(BaseSettings):
     FEED_WATCHDOG_SECONDS: float = 15.0
     ENABLE_PRICE_FEED: bool = True
 
+    # Security & Size Limits
+    MAX_REQUEST_BODY_BYTES: int = 65536  # 64 KB
+    WS_MAX_MESSAGE_BYTES: int = 16384  # 16 KB
+    WS_MAX_MESSAGES_PER_WINDOW: int = 30
+    WS_MESSAGE_WINDOW_SECONDS: float = 10.0
+    WS_CONNECT_LIMIT_PER_MINUTE: int = 20
+
     # Stored as a raw CSV string to avoid pydantic-settings JSON coercion
     TRADING_PAIRS: str = "BTCUSDT,ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT,ADAUSDT,DOGEUSDT,DOTUSDT"
     ALLOWED_ORIGINS: str = "*"
@@ -41,6 +54,20 @@ class Settings(BaseSettings):
         "env_file_encoding": "utf-8",
         "case_sensitive": True,
     }
+
+    @model_validator(mode="after")
+    def validate_environment_security(self) -> "Settings":
+        """Refuse to boot in non-dev environments with weak or placeholder JWT secret."""
+        if self.ENVIRONMENT not in ("development", "test"):
+            if len(self.JWT_SECRET) < 32 or self.JWT_SECRET in (
+                "change-me-to-a-random-secret",
+                "local-dev-secret-do-not-use-in-production",
+            ):
+                raise ValueError(
+                    "JWT_SECRET must be at least 32 characters and cannot use default "
+                    f"placeholders in non-development environment '{self.ENVIRONMENT}'."
+                )
+        return self
 
     @property
     def trading_pairs_list(self) -> list[str]:

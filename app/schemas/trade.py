@@ -25,6 +25,9 @@ MAX_QUANTITY_DP = 8
 # Reject absurdly large orders.
 MAX_QUANTITY = Decimal("1000000")
 
+# Maximum trade total value in USD.
+MAX_TRADE_VALUE = Decimal("10000000")
+
 
 def quantize(value: Decimal, rounding: str = ROUND_HALF_UP) -> Decimal:
     """Quantize *value* to 8 decimal places.
@@ -45,6 +48,8 @@ class TradeRequest(BaseModel):
     quantity: >0, ≤1_000_000, at most 8 decimal places.
     """
 
+    model_config = ConfigDict(extra="forbid")
+
     symbol: str
     quantity: Decimal
 
@@ -58,12 +63,17 @@ class TradeRequest(BaseModel):
     @field_validator("symbol", mode="after")
     @classmethod
     def validate_supported(cls, v: str) -> str:
+        import re
+        if not re.match(r"^[A-Z0-9]{3,20}$", v):
+            raise ValueError(f"Invalid symbol format: {v}")
         settings = get_settings()
         if v not in settings.trading_pairs_list:
-            raise ValueError(
-                f"Symbol {v} is not supported. "
-                f"Supported: {', '.join(settings.trading_pairs_list)}"
-            )
+            from app.core.price_registry import is_known, is_supported
+            if not is_supported(v) and not is_known(v):
+                raise ValueError(
+                    f"Symbol {v} is not supported. "
+                    f"Supported: {', '.join(settings.trading_pairs_list)}"
+                )
         return v
 
     @field_validator("quantity", mode="before")

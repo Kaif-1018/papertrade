@@ -40,6 +40,7 @@ from app.core.exceptions import (
     NotFoundError,
     SymbolNotSupported,
 )
+from app.core.logging import audit_logger
 from app.core.price_registry import get_price, get_sell_price, is_known, is_supported
 from app.models.trade import Trade, TradeType
 from app.repositories.holding_repository import HoldingRepository
@@ -48,6 +49,7 @@ from app.repositories.user import UserRepository
 from app.schemas.trade import (
     MAX_QUANTITY,
     MAX_QUANTITY_DP,
+    MAX_TRADE_VALUE,
     QUANT,
     TradeOut,
     TradeResult,
@@ -202,6 +204,12 @@ class TradeService:
                     },
                 )
 
+            # 4. Maximum trade value bound check.
+            if total > MAX_TRADE_VALUE:
+                raise InvalidQuantity(
+                    f"Trade total {total} exceeds maximum permitted order total of {MAX_TRADE_VALUE}"
+                )
+
             # 4a. Deduct balance.
             user.virtual_balance -= total
 
@@ -264,6 +272,16 @@ class TradeService:
                 "user_id": str(user_id),
             },
         )
+        audit_logger.info(
+            "audit_trade_executed",
+            trade_type="BUY",
+            symbol=symbol,
+            quantity=str(quantity),
+            price=str(exec_price),
+            total_value=str(total),
+            user_id=str(user_id),
+            trade_id=str(result.trade.id),
+        )
         return result
 
     # ------------------------------------------------------------------
@@ -324,7 +342,13 @@ class TradeService:
                     },
                 )
 
-            # 4a. Deduct holdings. avg_buy_price is unchanged on sells.
+            # 4. Maximum trade value bound check.
+            if total > MAX_TRADE_VALUE:
+                raise InvalidQuantity(
+                    f"Trade total {total} exceeds maximum permitted order total of {MAX_TRADE_VALUE}"
+                )
+
+            # 5a. Deduct holdings. avg_buy_price is unchanged on sells.
             holding.quantity -= quantity
             if holding.quantity == Decimal("0"):
                 await self._holdings.delete(holding)
@@ -369,6 +393,16 @@ class TradeService:
                 "total": str(total),
                 "user_id": str(user_id),
             },
+        )
+        audit_logger.info(
+            "audit_trade_executed",
+            trade_type="SELL",
+            symbol=symbol,
+            quantity=str(quantity),
+            price=str(exec_price),
+            total_value=str(total),
+            user_id=str(user_id),
+            trade_id=str(result.trade.id),
         )
         return result
 

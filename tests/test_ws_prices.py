@@ -302,8 +302,15 @@ def test_ws_redis_publish_broadcasts_live_tick(test_app, valid_token):
             # Publish to Redis prices:BTCUSDT
             r_sync.publish("prices:BTCUSDT", json.dumps(payload))
 
-            # WebSocket client receives broadcast
-            tick = ws.receive_json()
+            # WebSocket client receives broadcast (skip any background live Binance feed ticks)
+            deadline = time.time() + 5.0
+            tick = None
+            while time.time() < deadline:
+                msg = ws.receive_json()
+                if msg.get("type") == "price" and msg.get("price") == "69123.45000000":
+                    tick = msg
+                    break
+            assert tick is not None, "Did not receive published test price tick within deadline"
             assert tick["type"] == "price"
             assert tick["symbol"] == "BTCUSDT"
             assert tick["price"] == "69123.45000000"

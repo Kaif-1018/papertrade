@@ -9,12 +9,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
 from app.core.database import get_db
+from app.core.rate_limit import rate_limit
 from app.models.user import User
 from app.schemas.trade import TradeRequest, TradeResult
 from app.services.notifier import TradeNotifier, get_trade_notifier
 from app.services.trade_service import TradeService
 
-router = APIRouter(prefix="/api/trade", tags=["trade"])
+router = APIRouter(
+    prefix="/api/trade",
+    tags=["trade"],
+    dependencies=[Depends(rate_limit("trade", limit=30, window_seconds=60, key="user"))],
+)
 
 
 @router.post("/buy", response_model=TradeResult, status_code=status.HTTP_201_CREATED)

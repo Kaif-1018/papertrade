@@ -7,11 +7,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
 from app.core.database import get_db
+from app.core.rate_limit import rate_limit
 from app.models.user import User
 from app.schemas.history import TradeHistoryOut
 from app.services.analytics_service import AnalyticsService
 
-router = APIRouter(prefix="/api/trades", tags=["trades"])
+router = APIRouter(
+    prefix="/api/trades",
+    tags=["trades"],
+    dependencies=[Depends(rate_limit("general_api", limit=120, window_seconds=60, key="user"))],
+)
 
 
 @router.get(

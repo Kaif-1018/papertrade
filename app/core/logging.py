@@ -1,10 +1,33 @@
-"""Structured logging configuration using structlog."""
+"""Structured logging configuration using structlog.
 
+Includes:
+- JSON or console formatted output
+- Contextvars merge (request_id, etc.)
+- Automatic redaction of credentials (passwords, tokens, authorization, secrets)
+- Query string sanitation for WebSocket URLs in access logs
+- Dedicated audit logger instance
+"""
+
+from collections.abc import MutableMapping
 import logging
 import re
 import sys
+from typing import Any
 
 import structlog
+
+REDACT_KEYS = ("password", "token", "authorization", "secret")
+
+
+def redact_sensitive_data(
+    logger: Any, method_name: str, event_dict: MutableMapping[str, Any]
+) -> MutableMapping[str, Any]:
+    """Processor to automatically redact sensitive credentials from structured log entries."""
+    for key in list(event_dict.keys()):
+        key_lower = key.lower()
+        if any(secret_term in key_lower for secret_term in REDACT_KEYS):
+            event_dict[key] = "[REDACTED]"
+    return event_dict
 
 
 class RedactWebSocketQueryFilter(logging.Filter):
@@ -29,8 +52,13 @@ class RedactWebSocketQueryFilter(logging.Filter):
         return True
 
 
-def setup_logging(log_level: str = "INFO") -> None:
-    """Configure structlog with console rendering for development."""
+def setup_logging(log_level: str = "INFO", log_format: str = "console") -> None:
+    """Configure structlog and standard logging."""
+    renderer: Any = (
+        structlog.processors.JSONRenderer()
+        if log_format.lower() == "json"
+        else structlog.dev.ConsoleRenderer()
+    )
 
     structlog.configure(
         processors=[
@@ -42,8 +70,9 @@ def setup_logging(log_level: str = "INFO") -> None:
             structlog.processors.TimeStamper(fmt="iso"),
             structlog.processors.StackInfoRenderer(),
             structlog.processors.format_exc_info,
+            redact_sensitive_data,
             structlog.processors.UnicodeDecoder(),
-            structlog.dev.ConsoleRenderer(),
+            renderer,
         ],
         wrapper_class=structlog.stdlib.BoundLogger,
         context_class=dict,
@@ -60,3 +89,7 @@ def setup_logging(log_level: str = "INFO") -> None:
     # Attach redaction filter to uvicorn access logger
     uvicorn_access = logging.getLogger("uvicorn.access")
     uvicorn_access.addFilter(RedactWebSocketQueryFilter())
+
+
+# Dedicated audit logger for compliance and security events
+audit_logger = structlog.stdlib.get_logger("audit")

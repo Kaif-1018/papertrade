@@ -1,5 +1,6 @@
 """Admin router exposing platform controls for trading pairs, portfolio resets, and metrics."""
 
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request, status
@@ -150,3 +151,45 @@ async def get_platform_stats(
         ws_manager=ws_manager,
         price_feed=price_feed,
     )
+
+
+@router.get(
+    "/metrics",
+    summary="Retrieve operational metrics for observability and monitoring",
+)
+async def get_platform_metrics(request: Request) -> dict[str, Any]:
+    """Admin-only metrics endpoint: request counts, trade count, active WS connections, and feed status."""
+    from app.core.middleware import metrics_collector
+    from app.repositories.admin_repository import AdminRepository
+
+    ws_manager = getattr(request.app.state, "ws_manager", None)
+    price_feed = getattr(request.app.state, "price_feed", None)
+    session_factory_to_use = getattr(
+        request.app.state, "session_factory", async_session_factory
+    )
+
+    trade_count = 0
+    try:
+        async with session_factory_to_use() as session:
+            admin_repo = AdminRepository(session)
+            stats = await admin_repo.get_trade_volume_stats()
+            trade_count = stats.get("total_trades", 0)
+    except Exception:
+        pass
+
+    snapshot = metrics_collector.get_snapshot()
+    feed_reconnects = 0
+    if price_feed is not None:
+        feed_reconnects = getattr(price_feed, "reconnect_count", 0)
+        status_dict = getattr(price_feed, "status", None)
+        if isinstance(status_dict, dict):
+            feed_reconnects = status_dict.get("reconnect_count", feed_reconnects)
+
+    return {
+        "uptime_seconds": snapshot["uptime_seconds"],
+        "requests_total": snapshot["requests_total"],
+        "requests_by_status": snapshot["requests_by_status"],
+        "trade_count": trade_count,
+        "active_websockets": ws_manager.active_count() if ws_manager else 0,
+        "feed_reconnects": feed_reconnects,
+    }

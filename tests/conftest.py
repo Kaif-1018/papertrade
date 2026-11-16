@@ -100,6 +100,23 @@ async def db_session(db_conn: AsyncConnection) -> AsyncGenerator[AsyncSession, N
 # Redis and HTTP Client fixtures for integration tests
 # ---------------------------------------------------------------------------
 
+@pytest.fixture(autouse=True)
+def clean_redis_per_test(settings):
+    """Flush Redis before and after each test so rate limits and caches are fully isolated."""
+    import redis
+    try:
+        r = redis.from_url(settings.REDIS_URL)
+        r.flushdb()
+    except Exception:
+        pass
+    yield
+    try:
+        r = redis.from_url(settings.REDIS_URL)
+        r.flushdb()
+    except Exception:
+        pass
+
+
 @pytest_asyncio.fixture()
 async def test_redis() -> AsyncGenerator[Redis, None]:
     """Ensure Redis is connected and cleared before and after each test."""
@@ -112,7 +129,7 @@ async def test_redis() -> AsyncGenerator[Redis, None]:
 
 
 @pytest_asyncio.fixture()
-async def app_instance(db_session: AsyncSession, test_redis: Redis):
+async def app_instance(db_session: AsyncSession, test_redis: Redis, session_factory):
     """FastAPI test app instance with overridden DB and Redis dependencies."""
     app = create_app()
 
@@ -121,6 +138,7 @@ async def app_instance(db_session: AsyncSession, test_redis: Redis):
 
     app.dependency_overrides[get_db] = override_get_db
     app.dependency_overrides[get_redis] = lambda: test_redis
+    app.state.session_factory = session_factory
     return app
 
 

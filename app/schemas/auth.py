@@ -1,7 +1,7 @@
 """Authentication request and response schemas."""
 
 import re
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 EMAIL_REGEX = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
@@ -9,7 +9,9 @@ EMAIL_REGEX = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 class UserRegisterRequest(BaseModel):
     """Payload for user registration."""
 
-    email: str = Field(..., description="User's email address")
+    model_config = ConfigDict(extra="forbid")
+
+    email: str = Field(..., max_length=255, description="User's email address")
     password: str = Field(
         ...,
         min_length=8,
@@ -21,7 +23,7 @@ class UserRegisterRequest(BaseModel):
     @classmethod
     def validate_email(cls, v: str) -> str:
         cleaned = v.strip().lower()
-        if not EMAIL_REGEX.match(cleaned):
+        if len(cleaned) > 255 or not EMAIL_REGEX.match(cleaned):
             raise ValueError("Invalid email format")
         return cleaned
 
@@ -29,8 +31,10 @@ class UserRegisterRequest(BaseModel):
 class UserLoginRequest(BaseModel):
     """Payload for user login."""
 
-    email: str = Field(..., description="User's email address")
-    password: str = Field(..., description="User's password")
+    model_config = ConfigDict(extra="forbid")
+
+    email: str = Field(..., max_length=255, description="User's email address")
+    password: str = Field(..., min_length=1, max_length=128, description="User's password")
 
     @field_validator("email")
     @classmethod
@@ -41,7 +45,9 @@ class UserLoginRequest(BaseModel):
 class RefreshTokenRequest(BaseModel):
     """Payload for token refresh and logout."""
 
-    refresh_token: str = Field(..., description="JWT refresh token")
+    model_config = ConfigDict(extra="forbid")
+
+    refresh_token: str = Field(..., min_length=1, max_length=1024, description="JWT refresh token")
 
 
 class TokenResponse(BaseModel):

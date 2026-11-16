@@ -1,7 +1,9 @@
 """Private WebSocket portfolio valuation endpoint: /ws/portfolio/{user_id}."""
 
 import asyncio
+from collections import deque
 import json
+import time
 from typing import Any
 from uuid import UUID
 
@@ -13,6 +15,7 @@ from app.api.ws_auth import WebSocketAuthError, authenticate_websocket_with_clai
 from app.core.config import get_settings
 from app.core.database import async_session_factory
 from app.core.exceptions import NotFoundError
+from app.core.rate_limit import check_ws_rate_limit
 from app.services.portfolio_service import PortfolioService
 from app.services.ws_manager import ConnectionManager, get_ws_manager
 
@@ -40,6 +43,17 @@ async def ws_portfolio_endpoint(
     - Periodic refresh (every PORTFOLIO_REFRESH_INTERVAL_SECONDS) when live prices change unrealised PnL.
     """
     settings = get_settings()
+
+    # 0. Check connection rate limit (per client IP)
+    if not await check_ws_rate_limit(
+        websocket,
+        name="ws_connect",
+        limit=settings.WS_CONNECT_LIMIT_PER_MINUTE,
+        window_seconds=60,
+    ):
+        await websocket.accept()
+        await websocket.close(code=1008, reason="Connection rate limit exceeded")
+        return
 
     # 1. Authenticate and extract caller claims
     try:
@@ -119,11 +133,43 @@ async def ws_portfolio_endpoint(
     refresh_task = asyncio.create_task(_periodic_refresher())
 
     # 6. Client message loop (handles pings, keeps connection alive)
+    message_timestamps: deque[float] = deque()
     try:
         while True:
             try:
                 raw_text = await websocket.receive_text()
             except WebSocketDisconnect:
+                break
+
+            # Message size limit
+            if len(raw_text.encode("utf-8")) > settings.WS_MAX_MESSAGE_BYTES:
+                try:
+                    await websocket.send_json({
+                        "type": "error",
+                        "code": "MESSAGE_TOO_LARGE",
+                        "message": f"Message exceeds limit of {settings.WS_MAX_MESSAGE_BYTES} bytes",
+                    })
+                except Exception:
+                    pass
+                await websocket.close(code=1008, reason="Message payload too large")
+                break
+
+            # Message rate limit per connection
+            now_ts = time.time()
+            message_timestamps.append(now_ts)
+            while message_timestamps and message_timestamps[0] < now_ts - settings.WS_MESSAGE_WINDOW_SECONDS:
+                message_timestamps.popleft()
+
+            if len(message_timestamps) > settings.WS_MAX_MESSAGES_PER_WINDOW:
+                try:
+                    await websocket.send_json({
+                        "type": "error",
+                        "code": "RATE_LIMITED",
+                        "message": "Message rate limit exceeded",
+                    })
+                except Exception:
+                    pass
+                await websocket.close(code=1008, reason="Message rate limit exceeded")
                 break
 
             try:

@@ -20,6 +20,7 @@ from app.core.exceptions import (
     PairHasHoldingsError,
     PairNotFoundError,
 )
+from app.core.logging import audit_logger
 from app.models.trading_pair import TradingPair
 from app.repositories.admin_repository import AdminRepository
 from app.repositories.holding_repository import HoldingRepository
@@ -117,6 +118,12 @@ class AdminService:
                 "target": norm_symbol,
             },
         )
+        audit_logger.info(
+            "audit_admin_action",
+            admin_id=str(admin_id),
+            action="add_pair",
+            target=norm_symbol,
+        )
 
         feed_sync = "synced"
         if price_feed is not None:
@@ -170,6 +177,14 @@ class AdminService:
                 "force": force,
                 "holders_count": holders_count,
             },
+        )
+        audit_logger.info(
+            "audit_admin_action",
+            admin_id=str(admin_id),
+            action="deactivate_pair",
+            target=norm_symbol,
+            force=force,
+            holders_count=holders_count,
         )
 
         feed_sync = "synced"
@@ -264,6 +279,13 @@ class AdminService:
                 "target": str(user_id),
                 "reason": reason,
             },
+        )
+        audit_logger.info(
+            "audit_admin_action",
+            admin_id=str(admin_id),
+            action="reset_portfolio",
+            target=str(user_id),
+            reason=reason,
         )
 
         # Post-commit failure-isolated hooks

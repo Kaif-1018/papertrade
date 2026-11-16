@@ -19,6 +19,7 @@ from app.core.exceptions import (
     TokenReuseError,
     UserAlreadyExistsError,
 )
+from app.core.logging import audit_logger
 from app.core.redis import get_redis
 from app.core.security import (
     create_access_token,
@@ -87,6 +88,7 @@ class AuthService:
         valid_password = verify_password(password, user.password_hash) if user else False
         if not user or not valid_password:
             logger.warning("login_failed", email=cleaned_email)
+            audit_logger.warning("audit_login_failed", email=cleaned_email)
             raise InvalidCredentialsError("Invalid credentials")
 
         access_token = create_access_token(
@@ -103,6 +105,7 @@ class AuthService:
         await self.redis.set(redis_key, "1", ex=ttl_seconds)
 
         logger.info("user_logged_in", user_id=str(user.id))
+        audit_logger.info("audit_login_success", user_id=str(user.id), email=cleaned_email)
         return TokenResponse(
             access_token=access_token,
             refresh_token=refresh_token,
@@ -136,6 +139,7 @@ class AuthService:
         if not exists:
             # Token reuse detected: an already-consumed or invalid jti was presented
             logger.error("refresh_token_reuse_detected", user_id=user_id_str)
+            audit_logger.error("audit_refresh_token_reuse", user_id=user_id_str)
             await self.revoke_all_user_refresh_tokens(user_id_str)
             raise TokenReuseError("Refresh token reuse detected. All sessions revoked.")
 

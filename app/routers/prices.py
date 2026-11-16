@@ -2,13 +2,18 @@
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, Depends, status
 
 from app.core.exceptions import SymbolNotSupported
 from app.core.price_registry import get_all, get_price, is_supported
+from app.core.rate_limit import rate_limit
 from app.schemas.price import PriceOut
 
-router = APIRouter(prefix="/api/prices", tags=["prices"])
+router = APIRouter(
+    prefix="/api/prices",
+    tags=["prices"],
+    dependencies=[Depends(rate_limit("general_api", limit=120, window_seconds=60, key="ip"))],
+)
 
 
 @router.get(

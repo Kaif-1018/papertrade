@@ -18,6 +18,7 @@ class AppException(Exception):
         code: str | None = None,
         status_code: int | None = None,
         details: dict | None = None,
+        headers: dict[str, str] | None = None,
     ) -> None:
         if message is not None:
             self.message = message
@@ -26,7 +27,42 @@ class AppException(Exception):
         if status_code is not None:
             self.status_code = status_code
         self.details = details
+        self.headers = headers
         super().__init__(self.message)
+
+
+class RateLimitExceeded(AppException):
+    """Raised when an IP or user exceeds the permitted request rate."""
+
+    status_code = 429
+    code = "RATE_LIMITED"
+    message = "Too many requests. Please wait before retrying."
+
+    def __init__(
+        self,
+        message: str | None = None,
+        retry_after: int = 60,
+        limit: int = 60,
+        remaining: int = 0,
+        reset: int = 0,
+        details: dict | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> None:
+        merged_headers = {
+            "Retry-After": str(retry_after),
+            "X-RateLimit-Limit": str(limit),
+            "X-RateLimit-Remaining": str(remaining),
+            "X-RateLimit-Reset": str(reset),
+        }
+        if headers:
+            merged_headers.update(headers)
+        super().__init__(
+            message=message or self.message,
+            code=self.code,
+            status_code=self.status_code,
+            details=details,
+            headers=merged_headers,
+        )
 
 
 class InvalidCredentialsError(AppException):

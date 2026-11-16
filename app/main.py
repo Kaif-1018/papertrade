@@ -19,6 +19,12 @@ from app.core.config import get_settings
 from app.core.database import async_session_factory
 from app.core.exceptions import AppException
 from app.core.logging import setup_logging
+from app.core.middleware import (
+    AccessLogMiddleware,
+    RequestBodyLimitMiddleware,
+    RequestIdMiddleware,
+    SecurityHeadersMiddleware,
+)
 from app.core.redis import close_redis, init_redis
 from app.repositories.trading_pair_repository import TradingPairRepository
 from app.routers import (
@@ -46,13 +52,12 @@ logger = structlog.stdlib.get_logger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Startup: logging, Redis, price feed. Shutdown: stop feed, close Redis."""
-    setup_logging()
+    settings = get_settings()
+    setup_logging(log_level=settings.LOG_LEVEL, log_format=settings.LOG_FORMAT)
     logger.info("starting_up")
 
     await init_redis()
     logger.info("redis_connected")
-
-    settings = get_settings()
     feed_service: PriceFeedService | None = None
     feed_task: asyncio.Task[None] | None = None
     broadcaster_service: PriceBroadcasterService | None = None
@@ -137,18 +142,41 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 def create_app() -> FastAPI:
     """Build and return the FastAPI instance."""
+    settings = get_settings()
+
+    docs_url = "/docs" if settings.ENVIRONMENT != "production" else None
+    redoc_url = "/redoc" if settings.ENVIRONMENT != "production" else None
+    openapi_url = "/openapi.json" if settings.ENVIRONMENT != "production" else None
+
     app = FastAPI(
         title="Crypto Trading Simulator",
         description="Paper-trading simulator with live Binance prices",
         version="0.1.0",
         lifespan=lifespan,
+        docs_url=docs_url,
+        redoc_url=redoc_url,
+        openapi_url=openapi_url,
     )
 
-    # Middleware
+    # Middleware Stack (executed outer to inner)
+    app.add_middleware(
+        RequestBodyLimitMiddleware,
+        max_bytes=settings.MAX_REQUEST_BODY_BYTES,
+    )
+    app.add_middleware(SecurityHeadersMiddleware)
+    app.add_middleware(AccessLogMiddleware)
+    app.add_middleware(RequestIdMiddleware)
+
+    cors_origins = settings.allowed_origins_list
+    allow_creds = True
+    if "*" in cors_origins:
+        # Browser security standard: credentials cannot accompany wildcard origin
+        allow_creds = False
+
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
+        allow_origins=cors_origins,
+        allow_credentials=allow_creds,
         allow_methods=["*"],
         allow_headers=["*"],
     )
@@ -161,9 +189,14 @@ def create_app() -> FastAPI:
         body: dict = {"code": exc.code, "message": exc.message}
         if getattr(exc, "details", None) is not None:
             body["details"] = exc.details
+        headers = dict(getattr(exc, "headers", None) or {})
+        rate_headers = getattr(request.state, "rate_limit_headers", None)
+        if rate_headers:
+            headers.update(rate_headers)
         return JSONResponse(
             status_code=exc.status_code,
             content={"error": body},
+            headers=headers or None,
         )
 
     @app.exception_handler(RequestValidationError)

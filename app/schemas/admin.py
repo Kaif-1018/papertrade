@@ -10,7 +10,9 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 class AdminPairCreate(BaseModel):
     """Payload to add or reactivate a trading pair."""
 
-    symbol: str = Field(..., description="Trading pair symbol (e.g. BTCUSDT)")
+    model_config = ConfigDict(extra="forbid")
+
+    symbol: str = Field(..., max_length=20, description="Trading pair symbol (e.g. BTCUSDT)")
 
     @field_validator("symbol")
     @classmethod
@@ -50,6 +52,8 @@ class AdminPairDeleteOut(BaseModel):
 
 class AdminResetRequest(BaseModel):
     """Request body for resetting a user's portfolio."""
+
+    model_config = ConfigDict(extra="forbid")
 
     reason: str = Field(
         ...,
