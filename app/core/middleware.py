@@ -143,9 +143,12 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             "magnetometer=(), microphone=(), payment=(), usb=()"
         )
         response.headers["Content-Security-Policy"] = (
-            "default-src 'self'; script-src 'self' 'unsafe-inline'; "
-            "style-src 'self' 'unsafe-inline'; connect-src 'self' ws: wss:; "
-            "img-src 'self' data:;"
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+            "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+            "connect-src 'self' ws: wss:; "
+            "img-src 'self' data: https://fastapi.tiangolo.com; "
+            "worker-src 'self' blob:;"
         )
         return response
 
